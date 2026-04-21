@@ -112,6 +112,7 @@ final class ConversationStore: ObservableObject {
         let t = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.tick() }
         }
+        // `.common` mode keeps the timer firing during window resize and menu tracking.
         RunLoop.main.add(t, forMode: .common)
         tickTimer = t
     }
