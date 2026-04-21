@@ -60,3 +60,11 @@ fastlane/report.xml
 fastlane/Preview.html
 fastlane/screenshots/**/*.png
 fastlane/test_output
+
+# XcodeGen output — regenerated from project.yml
+Pits.xcodeproj/
+# Xcode build output
+DerivedData/
+build/
+*.xcuserstate
+.swiftpm/
