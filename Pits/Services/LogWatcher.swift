@@ -34,8 +34,9 @@ final class LogWatcher {
     /// a whole batch of files has been ingested.
     var onRescanComplete: (() -> Void)?
 
-    init(rootDirectory: URL) {
+    init(rootDirectory: URL, initialOffsets: [URL: UInt64] = [:]) {
         self.rootDirectory = rootDirectory
+        self.offsets = initialOffsets
     }
 
     deinit { stop() }
@@ -105,6 +106,20 @@ final class LogWatcher {
             FSEventStreamInvalidate(s)
             FSEventStreamRelease(s)
             stream = nil
+        }
+    }
+
+    /// Snapshot of file offsets for persistence. Each offset is adjusted to
+    /// point *before* any trailing partial line so the partial bytes get
+    /// re-read on next launch (avoids needing to persist `partials`).
+    func currentOffsetsForPersistence() -> [URL: UInt64] {
+        queue.sync {
+            var result: [URL: UInt64] = [:]
+            for (url, offset) in offsets {
+                let partialLen = UInt64(partials[url]?.count ?? 0)
+                result[url] = offset >= partialLen ? offset - partialLen : 0
+            }
+            return result
         }
     }
 

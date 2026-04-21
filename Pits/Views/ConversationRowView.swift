@@ -29,7 +29,7 @@ struct ConversationRowView: View {
     }
 
     var body: some View {
-        HStack(alignment: .center, spacing: 10) {
+        HStack(alignment: .top, spacing: 10) {
             // Disclosure chevron — matches Finder's sidebar glyph.
             if let isExpanded {
                 Button {
@@ -49,10 +49,13 @@ struct ConversationRowView: View {
                 Spacer().frame(width: 18)
             }
 
-            // Status dot
+            // Status dot — pinned to the title line, Mail-style.
+            // Hidden for cold sessions but the column stays reserved so the
+            // title column lines up whether warm or cold.
             Circle()
-                .fill(accent)
+                .fill(status == .warm ? accent : Color.clear)
                 .frame(width: 8, height: 8)
+                .padding(.top, 5)
 
             // Primary label: AI-generated title if present, falling back to the
             // project path. When a title is shown, the project path sits beneath
@@ -88,9 +91,11 @@ struct ConversationRowView: View {
             }
 
             VStack(alignment: .trailing, spacing: 2) {
-                Text(remainingText)
-                    .font(.system(.body, design: .monospaced))
-                    .foregroundStyle(accent)
+                if status == .warm {
+                    Text(remainingText)
+                        .font(.system(.body, design: .monospaced))
+                        .foregroundStyle(accent)
+                }
                 Text(status == .warm ? "warm" : "cold")
                     .font(.system(.caption2, design: .monospaced))
                     .foregroundStyle(.secondary)

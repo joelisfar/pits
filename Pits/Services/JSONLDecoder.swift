@@ -8,7 +8,7 @@ enum JSONLEntry {
 }
 
 /// Marker for a human turn (used by the classifier, not displayed).
-struct HumanTurn: Equatable {
+struct HumanTurn: Equatable, Codable {
     let sessionId: String
     let timestamp: Date
     let isSubagent: Bool
@@ -17,7 +17,7 @@ struct HumanTurn: Equatable {
 
 /// AI-generated session title — written as a one-shot `{"type":"ai-title",...}`
 /// entry in the JSONL by Claude Code once the first few turns are summarized.
-struct SessionTitle {
+struct SessionTitle: Equatable, Codable {
     let sessionId: String
     let title: String
 }

@@ -46,6 +46,11 @@ struct ConversationListView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Spacer()
+                if store.isLoading {
+                    ProgressView()
+                        .controlSize(.small)
+                        .scaleEffect(0.7)
+                }
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 6)

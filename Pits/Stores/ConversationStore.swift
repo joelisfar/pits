@@ -10,7 +10,7 @@ final class ConversationStore: ObservableObject {
     @Published private(set) var isLoading: Bool = false
     /// How many days back we've loaded (1 = today only). `loadMoreDays()`
     /// bumps this; the watcher's `minMtime` is derived from it.
-    @Published private(set) var daysLoaded: Int = 1
+    @Published private(set) var daysLoaded: Int
     /// Number of additional one-day chunks still queued for progressive load.
     /// Drives the chain of loads that runs each day sequentially so the UI
     /// gets a visible step per day instead of one long wait at the end.
@@ -22,11 +22,12 @@ final class ConversationStore: ObservableObject {
     var onNewTurn: ((Turn) -> Void)?
 
     private let rootDirectory: URL
-    private let parser = LogParser()
+    private let parser: LogParser
     private let watcher: LogWatcher
     private let cacheTimer = CacheTimer()
     private let sound: SoundManager
-    private var fileBySession: [String: URL] = [:]
+    private let cache: SnapshotCache?
+    private var fileBySession: [String: URL]
     private var tickTimer: Timer?
     /// Turns with a timestamp strictly greater than this chime.
     /// Before `start()` is called, it is `.distantFuture` so ingested lines
@@ -36,12 +37,23 @@ final class ConversationStore: ObservableObject {
     init(
         rootDirectory: URL,
         ttlSeconds: TimeInterval,
-        sound: SoundManager = SoundManager()
+        sound: SoundManager = SoundManager(),
+        cache: SnapshotCache? = nil
     ) {
         self.rootDirectory = rootDirectory
         self.ttlSeconds = ttlSeconds
         self.sound = sound
-        self.watcher = LogWatcher(rootDirectory: rootDirectory)
+        self.cache = cache
+
+        // Hydrate from cache if present. Pruning rule: drop sessions whose
+        // backing JSONL file no longer exists on disk.
+        let pruned = cache.flatMap { Self.prune(state: $0.load()) }
+
+        self.parser = LogParser(seed: pruned?.parser)
+        self.watcher = LogWatcher(rootDirectory: rootDirectory, initialOffsets: pruned?.offsets ?? [:])
+        self.fileBySession = pruned?.fileBySession ?? [:]
+        self.daysLoaded = pruned?.daysLoaded ?? 1
+
         self.watcher.onLines = { [weak self] url, lines in
             DispatchQueue.main.async { self?.handleLines(url: url, lines: lines) }
         }
@@ -63,6 +75,47 @@ final class ConversationStore: ObservableObject {
                 }
             }
         }
+
+        if pruned != nil {
+            // Cache hit — populate `conversations` synchronously so the view
+            // appears with the list ready, no spinner.
+            rebuildSnapshot()
+        }
+    }
+
+    /// Filter a hydrated state: drop sessions whose JSONL file no longer
+    /// exists on disk (and the matching offsets / parser entries).
+    private static func prune(state: PersistedState?) -> PersistedState? {
+        guard let state else { return nil }
+        let fm = FileManager.default
+        var files = state.fileBySession
+        var offs = state.offsets
+        var droppedSessions: Set<String> = []
+        for (sid, url) in state.fileBySession where !fm.fileExists(atPath: url.path) {
+            files.removeValue(forKey: sid)
+            offs.removeValue(forKey: url)
+            droppedSessions.insert(sid)
+        }
+        var turns = state.parser.turnsByRequestId
+        for (rid, turn) in turns where droppedSessions.contains(turn.sessionId) {
+            turns.removeValue(forKey: rid)
+        }
+        var humans = state.parser.humanTurnsBySession
+        for sid in droppedSessions { humans.removeValue(forKey: sid) }
+        var titles = state.parser.titleBySession
+        for sid in droppedSessions { titles.removeValue(forKey: sid) }
+        return PersistedState(
+            schemaVersion: state.schemaVersion,
+            savedAt: state.savedAt,
+            daysLoaded: state.daysLoaded,
+            fileBySession: files,
+            offsets: offs,
+            parser: PersistedParser(
+                turnsByRequestId: turns,
+                humanTurnsBySession: humans,
+                titleBySession: titles
+            )
+        )
     }
 
     func start() {
@@ -70,10 +123,10 @@ final class ConversationStore: ObservableObject {
         // loaded during backfill is historical and does not chime.
         chimeCutoff = Date()
         isLoading = true
-        // Initial load: today plus the previous 6 days, delivered
-        // progressively one day at a time so the list pops in as each day
-        // finishes instead of waiting for the whole week at the end.
-        pendingLoadDays = 6
+        // Cold launch (daysLoaded == 1, no cache hit): progressive 6-day
+        // chain. Warm launch: daysLoaded already reflects the user's loaded
+        // window — just reconcile once.
+        pendingLoadDays = (daysLoaded == 1) ? 6 : 0
         watcher.minMtime = Self.cutoffDate(daysBack: daysLoaded)
         // Start live watching + the 1 Hz timer on main — both are non-blocking.
         watcher.start()
@@ -113,6 +166,9 @@ final class ConversationStore: ObservableObject {
     }
 
     func stop() {
+        if let cache {
+            try? cache.saveNow(snapshotState())
+        }
         watcher.stop()
         tickTimer?.invalidate()
         tickTimer = nil
@@ -137,6 +193,18 @@ final class ConversationStore: ObservableObject {
         }
         result.sort { $0.lastActivityTimestamp > $1.lastActivityTimestamp }
         conversations = result
+        cache?.scheduleSave(snapshotState())
+    }
+
+    private func snapshotState() -> PersistedState {
+        PersistedState(
+            schemaVersion: 1,
+            savedAt: Date(),
+            daysLoaded: daysLoaded,
+            fileBySession: fileBySession,
+            offsets: watcher.currentOffsetsForPersistence(),
+            parser: parser.snapshot()
+        )
     }
 
     // MARK: - Testing hooks
@@ -153,6 +221,21 @@ final class ConversationStore: ObservableObject {
 
     func setChimeCutoffForTesting(_ date: Date) {
         chimeCutoff = date
+    }
+
+    func snapshotStateForTesting() -> PersistedState {
+        snapshotState()
+    }
+
+    /// Synchronous reconciliation for tests. Mirrors `start()`'s reconcile
+    /// pass without touching FSEvents or async dispatch.
+    func reconcileForTesting() {
+        chimeCutoff = Date()
+        watcher.minMtime = Self.cutoffDate(daysBack: max(1, daysLoaded))
+        watcher.backfill()
+        // Drain any onLines blocks the watcher dispatched to main.
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        rebuildSnapshot()
     }
 
     // MARK: - Private
