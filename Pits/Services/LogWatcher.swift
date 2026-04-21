@@ -12,6 +12,10 @@ final class LogWatcher {
     private var stream: FSEventStreamRef?
     private let queue = DispatchQueue(label: "net.farriswheel.Pits.LogWatcher")
 
+    /// Invoked on the LogWatcher's internal serial queue for each newly-emitted
+    /// complete line. Hop to another queue if your handler may re-enter the
+    /// watcher — calling `rescan()` or `backfill()` from within `onLine` will
+    /// deadlock.
     var onLine: ((URL, String) -> Void)?
 
     init(rootDirectory: URL) {
@@ -36,15 +40,29 @@ final class LogWatcher {
     func start() {
         guard stream == nil else { return }
         let cfPaths = [rootDirectory.path] as CFArray
+        // Retained pointer: the FSEventStream system holds a strong reference
+        // for the stream's lifetime, and releases it via the `release` callback
+        // when the stream is invalidated. This prevents a race between a
+        // late-arriving callback and `deinit`.
+        let retainedInfo = Unmanaged.passRetained(self).toOpaque()
         var context = FSEventStreamContext(
             version: 0,
-            info: Unmanaged.passUnretained(self).toOpaque(),
-            retain: nil, release: nil, copyDescription: nil
+            info: retainedInfo,
+            retain: nil,
+            release: { info in
+                guard let info else { return }
+                Unmanaged<LogWatcher>.fromOpaque(info).release()
+            },
+            copyDescription: nil
         )
         let callback: FSEventStreamCallback = { _, info, _, _, _, _ in
             guard let info else { return }
             let watcher = Unmanaged<LogWatcher>.fromOpaque(info).takeUnretainedValue()
-            watcher.rescan()
+            // Callback is already dispatched to `queue` via
+            // FSEventStreamSetDispatchQueue(_, queue), so invoke the locked
+            // work directly. Calling `rescan()` here would deadlock
+            // (queue.sync from queue).
+            watcher.rescanLocked()
         }
         let flags = UInt32(kFSEventStreamCreateFlagFileEvents | kFSEventStreamCreateFlagNoDefer)
         guard let s = FSEventStreamCreate(
@@ -55,7 +73,11 @@ final class LogWatcher {
             UInt64(kFSEventStreamEventIdSinceNow),
             0.5,  // latency: 500ms coalescing
             flags
-        ) else { return }
+        ) else {
+            // Balance the `passRetained` on the failure path so we don't leak.
+            Unmanaged<LogWatcher>.fromOpaque(retainedInfo).release()
+            return
+        }
         FSEventStreamSetDispatchQueue(s, queue)
         FSEventStreamStart(s)
         stream = s
@@ -143,8 +165,12 @@ final class LogWatcher {
         partials[url] = trailing.isEmpty ? nil : trailing
 
         for lineData in lines {
-            if let line = String(data: lineData, encoding: .utf8), !line.isEmpty {
-                onLine?(url, line)
+            if let raw = String(data: lineData, encoding: .utf8) {
+                // Tolerate CRLF endings by stripping a trailing \r.
+                let line = raw.hasSuffix("\r") ? String(raw.dropLast()) : raw
+                if !line.isEmpty {
+                    onLine?(url, line)
+                }
             }
         }
     }

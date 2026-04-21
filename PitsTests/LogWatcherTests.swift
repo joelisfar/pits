@@ -88,4 +88,38 @@ final class LogWatcherTests: XCTestCase {
         watcher.rescan()
         XCTAssertEqual(received, ["hello"])
     }
+
+    func test_liveStart_emitsLineOnAppend() throws {
+        let project = tmpDir.appendingPathComponent("-tmp-live")
+        try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
+        let file = project.appendingPathComponent("live.jsonl")
+        try "seed\n".write(to: file, atomically: true, encoding: .utf8)
+
+        let watcher = LogWatcher(rootDirectory: tmpDir)
+        let expectation = expectation(description: "received appended line")
+        // We'll count both the backfilled "seed" and at least one appended line.
+        var received: [String] = []
+        let lock = NSLock()
+        watcher.onLine = { _, line in
+            lock.lock(); received.append(line); lock.unlock()
+            if line == "fresh" { expectation.fulfill() }
+        }
+        watcher.backfill()
+        watcher.start()
+
+        // Append a new line — FSEvents should deliver within a few seconds.
+        let handle = try FileHandle(forWritingTo: file)
+        try handle.seekToEnd()
+        try handle.write(contentsOf: Data("fresh\n".utf8))
+        try handle.close()
+
+        wait(for: [expectation], timeout: 10.0)
+        watcher.stop()
+
+        lock.lock()
+        let snapshot = received
+        lock.unlock()
+        XCTAssertTrue(snapshot.contains("seed"))
+        XCTAssertTrue(snapshot.contains("fresh"))
+    }
 }
