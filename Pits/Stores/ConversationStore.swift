@@ -227,6 +227,17 @@ final class ConversationStore: ObservableObject {
         snapshotState()
     }
 
+    /// Synchronous reconciliation for tests. Mirrors `start()`'s reconcile
+    /// pass without touching FSEvents or async dispatch.
+    func reconcileForTesting() {
+        chimeCutoff = Date()
+        watcher.minMtime = Self.cutoffDate(daysBack: max(1, daysLoaded))
+        watcher.backfill()
+        // Drain any onLines blocks the watcher dispatched to main.
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        rebuildSnapshot()
+    }
+
     // MARK: - Private
 
     private func handleLines(url: URL, lines: [String]) {

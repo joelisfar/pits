@@ -100,6 +100,49 @@ final class ConversationStoreCacheTests: XCTestCase {
         XCTAssertTrue(chimes.isEmpty)
     }
 
+    func test_warmInit_reconciliationPicksUpNewBytes() throws {
+        // Use a real directory + JSONL so the watcher's discoverFiles can find it.
+        let projectsRoot = tmpDir.appendingPathComponent("projects")
+        let project = projectsRoot.appendingPathComponent("-tmp-proj")
+        try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
+        let file = project.appendingPathComponent("s.jsonl")
+        let firstLine = #"{"type":"assistant","sessionId":"s1","requestId":"r1","timestamp":"2026-04-21T10:00:00.000Z","message":{"model":"claude-opus-4-6","stop_reason":"end_turn","usage":{"input_tokens":1,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":1}}}"#
+        try (firstLine + "\n").write(to: file, atomically: true, encoding: .utf8)
+
+        // Cold setup: ingest the first line through the store, save the cache.
+        let setupCache = SnapshotCache(fileURL: cacheURL)
+        let setupStore = makeStore(cache: setupCache, root: projectsRoot)
+        setupStore.ingestForTesting(url: file, line: firstLine)
+        // ingestForTesting bypasses the watcher; manually persist with the
+        // offset reflecting that the first line was already consumed.
+        try setupCache.saveNow(PersistedState(
+            schemaVersion: 1,
+            savedAt: Date(),
+            daysLoaded: 1,
+            fileBySession: ["s1": file],
+            offsets: [file: UInt64((firstLine + "\n").utf8.count)],
+            parser: setupStore.snapshotStateForTesting().parser
+        ))
+
+        // Append a second line to the file, simulating Claude writing more turns
+        // while the app was closed.
+        let secondLine = #"{"type":"assistant","sessionId":"s1","requestId":"r2","timestamp":"2026-04-21T10:05:00.000Z","message":{"model":"claude-opus-4-6","stop_reason":"end_turn","usage":{"input_tokens":2,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":2}}}"#
+        let handle = try FileHandle(forWritingTo: file)
+        try handle.seekToEnd()
+        try handle.write(contentsOf: (secondLine + "\n").data(using: .utf8)!)
+        try handle.close()
+
+        // Warm launch: load cache, then trigger a reconciliation backfill.
+        let warmCache = SnapshotCache(fileURL: cacheURL)
+        let warmStore = makeStore(cache: warmCache, root: projectsRoot)
+
+        warmStore.reconcileForTesting()
+
+        XCTAssertEqual(warmStore.conversations.count, 1)
+        XCTAssertEqual(warmStore.conversations.first?.turns.count, 2,
+                       "Reconciliation should pick up the appended second turn")
+    }
+
     func test_roundtrip_coldIngestSaveReinitMatches() throws {
         let project = tmpDir.appendingPathComponent("-proj")
         try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
