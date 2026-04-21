@@ -51,4 +51,47 @@ final class PersistedStateTests: XCTestCase {
         XCTAssertEqual(decoded.sessionId, t.sessionId)
         XCTAssertEqual(decoded.title, t.title)
     }
+
+    func test_persistedParser_codableRoundtrip() throws {
+        let turn = Turn(
+            requestId: "r1", sessionId: "s1",
+            timestamp: Date(timeIntervalSince1970: 1_700_000_000),
+            model: "claude-opus-4-6",
+            inputTokens: 1, cacheCreationTokens: 0,
+            cacheReadTokens: 0, outputTokens: 1,
+            stopReason: "end_turn", isSubagent: false
+        )
+        let h = HumanTurn(
+            sessionId: "s1",
+            timestamp: Date(timeIntervalSince1970: 1_700_000_001),
+            isSubagent: false, agentId: nil
+        )
+        let p = PersistedParser(
+            turnsByRequestId: ["r1": turn],
+            humanTurnsBySession: ["s1": [h]],
+            titleBySession: ["s1": "Title"]
+        )
+        let data = try iso8601Encoder().encode(p)
+        let decoded = try iso8601Decoder().decode(PersistedParser.self, from: data)
+        XCTAssertEqual(decoded, p)
+    }
+
+    func test_persistedState_codableRoundtrip() throws {
+        let url = URL(fileURLWithPath: "/tmp/-proj/abc.jsonl")
+        let state = PersistedState(
+            schemaVersion: 1,
+            savedAt: Date(timeIntervalSince1970: 1_700_000_000),
+            daysLoaded: 7,
+            fileBySession: ["s1": url],
+            offsets: [url: 1234],
+            parser: PersistedParser(
+                turnsByRequestId: [:],
+                humanTurnsBySession: [:],
+                titleBySession: [:]
+            )
+        )
+        let data = try iso8601Encoder().encode(state)
+        let decoded = try iso8601Decoder().decode(PersistedState.self, from: data)
+        XCTAssertEqual(decoded, state)
+    }
 }
