@@ -24,3 +24,19 @@ xcodebuild -project Pits.xcodeproj -scheme Pits -destination 'platform=macOS' te
 ## Data source
 
 Pits reads JSONL session logs from `~/.claude/projects/`. No configuration required.
+
+## Smoke test / manual QA
+
+To verify Pits is picking up new turns without waiting for real Claude Code activity:
+
+```sh
+bash scripts/smoke-fake-session.sh
+```
+
+This appends a fabricated assistant turn to `~/.claude/projects/-tmp-pits-smoke/smoke.jsonl`. A new `smoke-sess` row should appear in Pits within about a second.
+
+To clean up when you're done:
+
+```sh
+rm -rf ~/.claude/projects/-tmp-pits-smoke
+```

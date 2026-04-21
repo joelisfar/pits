@@ -12,11 +12,12 @@ final class LogWatcher {
     private var stream: FSEventStreamRef?
     private let queue = DispatchQueue(label: "net.farriswheel.Pits.LogWatcher")
 
-    /// Invoked on the LogWatcher's internal serial queue for each newly-emitted
-    /// complete line. Hop to another queue if your handler may re-enter the
-    /// watcher — calling `rescan()` or `backfill()` from within `onLine` will
-    /// deadlock.
-    var onLine: ((URL, String) -> Void)?
+    /// Invoked on the LogWatcher's internal serial queue once per
+    /// `readNewBytes(from:)` call with all complete lines discovered in that
+    /// pass (per-file, per-rescan batching). Not invoked with an empty array.
+    /// Hop to another queue if your handler may re-enter the watcher —
+    /// calling `rescan()` or `backfill()` from within `onLines` will deadlock.
+    var onLines: ((URL, [String]) -> Void)?
 
     init(rootDirectory: URL) {
         self.rootDirectory = rootDirectory
@@ -164,14 +165,16 @@ final class LogWatcher {
         let trailing = Data(buffer[start..<buffer.endIndex])
         partials[url] = trailing.isEmpty ? nil : trailing
 
+        var emitted: [String] = []
         for lineData in lines {
             if let raw = String(data: lineData, encoding: .utf8) {
                 // Tolerate CRLF endings by stripping a trailing \r.
                 let line = raw.hasSuffix("\r") ? String(raw.dropLast()) : raw
-                if !line.isEmpty {
-                    onLine?(url, line)
-                }
+                if !line.isEmpty { emitted.append(line) }
             }
+        }
+        if !emitted.isEmpty {
+            onLines?(url, emitted)
         }
     }
 }

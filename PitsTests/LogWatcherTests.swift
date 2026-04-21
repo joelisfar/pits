@@ -14,6 +14,28 @@ final class LogWatcherTests: XCTestCase {
         try? FileManager.default.removeItem(at: tmpDir)
     }
 
+    func test_backfill_emitsOneBatchPerFile() throws {
+        let projectA = tmpDir.appendingPathComponent("-tmp-a")
+        let projectB = tmpDir.appendingPathComponent("-tmp-b")
+        try FileManager.default.createDirectory(at: projectA, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: projectB, withIntermediateDirectories: true)
+        let fileA = projectA.appendingPathComponent("a.jsonl")
+        let fileB = projectB.appendingPathComponent("b.jsonl")
+        try "a1\na2\na3\n".write(to: fileA, atomically: true, encoding: .utf8)
+        try "b1\nb2\n".write(to: fileB, atomically: true, encoding: .utf8)
+
+        var batches: [(URL, [String])] = []
+        let watcher = LogWatcher(rootDirectory: tmpDir)
+        watcher.onLines = { url, lines in batches.append((url, lines)) }
+        watcher.backfill()
+
+        // One batch per file, never per-line.
+        XCTAssertEqual(batches.count, 2)
+        let byURL = Dictionary(uniqueKeysWithValues: batches.map { ($0.0, $0.1) })
+        XCTAssertEqual(byURL[fileA], ["a1", "a2", "a3"])
+        XCTAssertEqual(byURL[fileB], ["b1", "b2"])
+    }
+
     func test_backfill_readsAllExistingLines() throws {
         let project = tmpDir.appendingPathComponent("-tmp-proj")
         try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
@@ -22,7 +44,7 @@ final class LogWatcherTests: XCTestCase {
 
         var received: [(URL, String)] = []
         let watcher = LogWatcher(rootDirectory: tmpDir)
-        watcher.onLine = { url, line in received.append((url, line)) }
+        watcher.onLines = { url, lines in for l in lines { received.append((url, l)) } }
         watcher.backfill()
 
         XCTAssertEqual(received.count, 2)
@@ -38,7 +60,7 @@ final class LogWatcherTests: XCTestCase {
 
         var received: [String] = []
         let watcher = LogWatcher(rootDirectory: tmpDir)
-        watcher.onLine = { _, line in received.append(line) }
+        watcher.onLines = { _, lines in received.append(contentsOf: lines) }
         watcher.backfill()
         XCTAssertEqual(received, ["line1"])
 
@@ -60,7 +82,7 @@ final class LogWatcherTests: XCTestCase {
 
         var received: [String] = []
         let watcher = LogWatcher(rootDirectory: tmpDir)
-        watcher.onLine = { _, line in received.append(line) }
+        watcher.onLines = { _, lines in received.append(contentsOf: lines) }
         watcher.backfill()
         XCTAssertEqual(received, ["complete1"])
 
@@ -76,7 +98,7 @@ final class LogWatcherTests: XCTestCase {
     func test_newFile_discoveredOnRescan() throws {
         let watcher = LogWatcher(rootDirectory: tmpDir)
         var received: [String] = []
-        watcher.onLine = { _, line in received.append(line) }
+        watcher.onLines = { _, lines in received.append(contentsOf: lines) }
         watcher.backfill()
         XCTAssertTrue(received.isEmpty)
 
@@ -100,9 +122,9 @@ final class LogWatcherTests: XCTestCase {
         // We'll count both the backfilled "seed" and at least one appended line.
         var received: [String] = []
         let lock = NSLock()
-        watcher.onLine = { _, line in
-            lock.lock(); received.append(line); lock.unlock()
-            if line == "fresh" { expectation.fulfill() }
+        watcher.onLines = { _, lines in
+            lock.lock(); received.append(contentsOf: lines); lock.unlock()
+            if lines.contains("fresh") { expectation.fulfill() }
         }
         watcher.backfill()
         watcher.start()

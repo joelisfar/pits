@@ -47,6 +47,22 @@ final class ConversationStoreTests: XCTestCase {
         XCTAssertEqual(store.conversations.first?.ttlSeconds, 600)
     }
 
+    func test_batchIngest_producesCorrectState() {
+        let store = makeStore()
+        let url = URL(fileURLWithPath: "/Users/j/.claude/projects/-Users-j-Projects-demo/abc.jsonl")
+        let lines = [
+            #"{"type":"assistant","sessionId":"s1","requestId":"r1","timestamp":"2026-04-21T10:00:00.000Z","message":{"model":"claude-opus-4-6","stop_reason":"end_turn","usage":{"input_tokens":1,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":1}}}"#,
+            #"{"type":"assistant","sessionId":"s1","requestId":"r2","timestamp":"2026-04-21T10:05:00.000Z","message":{"model":"claude-opus-4-6","stop_reason":"end_turn","usage":{"input_tokens":1,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":1}}}"#,
+            #"{"type":"assistant","sessionId":"s2","requestId":"r3","timestamp":"2026-04-21T11:00:00.000Z","message":{"model":"claude-opus-4-6","stop_reason":"end_turn","usage":{"input_tokens":1,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":1}}}"#,
+        ]
+
+        store.ingestBatchForTesting(url: url, lines: lines)
+
+        XCTAssertEqual(store.conversations.count, 2)
+        XCTAssertEqual(store.conversations.map(\.id), ["s2", "s1"])
+        XCTAssertEqual(store.conversations.first(where: { $0.id == "s1" })?.turns.count, 2)
+    }
+
     func test_noChimeFiresBeforeStart() {
         // Chime cutoff is `.distantFuture` until start(); tests never reach start(),
         // so even though ingestForTesting feeds a "new" turn, the silent player
