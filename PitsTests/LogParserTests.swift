@@ -1,0 +1,61 @@
+import XCTest
+@testable import Pits
+
+final class LogParserTests: XCTestCase {
+    private func fixtureURL(_ name: String) -> URL {
+        Bundle(for: LogParserTests.self).url(forResource: name.replacingOccurrences(of: ".jsonl", with: ""),
+                                              withExtension: "jsonl",
+                                              subdirectory: "Fixtures")
+        ?? URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .appendingPathComponent("Fixtures/\(name)")
+    }
+
+    private func lines(of name: String) -> [String] {
+        let content = (try? String(contentsOf: fixtureURL(name))) ?? ""
+        return content.split(separator: "\n", omittingEmptySubsequences: true).map(String.init)
+    }
+
+    func test_ingest_keepsFirstSeen_whenNoStopReasonPreference() {
+        let parser = LogParser()
+        parser.ingest(line: #"{"type":"assistant","sessionId":"s","requestId":"r1","timestamp":"2026-04-21T10:00:00.000Z","message":{"model":"claude-opus-4-6","usage":{"input_tokens":1,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":1}}}"#)
+        parser.ingest(line: #"{"type":"assistant","sessionId":"s","requestId":"r1","timestamp":"2026-04-21T10:00:01.000Z","message":{"model":"claude-opus-4-6","usage":{"input_tokens":99,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":99}}}"#)
+        let turns = parser.turns(sessionId: "s")
+        XCTAssertEqual(turns.count, 1)
+        XCTAssertEqual(turns.first?.inputTokens, 1)
+    }
+
+    func test_ingest_preferNonNilStopReason() {
+        let parser = LogParser()
+        for line in lines(of: "sample-dedup.jsonl") { parser.ingest(line: line) }
+        let turns = parser.turns(sessionId: "s1")
+        XCTAssertEqual(turns.count, 1)
+        XCTAssertEqual(turns.first?.stopReason, "end_turn")
+        XCTAssertEqual(turns.first?.inputTokens, 2)
+    }
+
+    func test_groupBySession() {
+        let parser = LogParser()
+        parser.ingest(line: #"{"type":"assistant","sessionId":"a","requestId":"r1","timestamp":"2026-04-21T10:00:00.000Z","message":{"model":"claude-opus-4-6","usage":{"input_tokens":1,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":1}}}"#)
+        parser.ingest(line: #"{"type":"assistant","sessionId":"b","requestId":"r2","timestamp":"2026-04-21T10:00:00.000Z","message":{"model":"claude-opus-4-6","usage":{"input_tokens":1,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":1}}}"#)
+        XCTAssertEqual(parser.turns(sessionId: "a").count, 1)
+        XCTAssertEqual(parser.turns(sessionId: "b").count, 1)
+        XCTAssertTrue(parser.turns(sessionId: "unknown").isEmpty)
+    }
+
+    func test_turns_sortedByTimestamp() {
+        let parser = LogParser()
+        parser.ingest(line: #"{"type":"assistant","sessionId":"s","requestId":"r2","timestamp":"2026-04-21T10:00:02.000Z","message":{"model":"claude-opus-4-6","usage":{"input_tokens":1,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":1}}}"#)
+        parser.ingest(line: #"{"type":"assistant","sessionId":"s","requestId":"r1","timestamp":"2026-04-21T10:00:01.000Z","message":{"model":"claude-opus-4-6","usage":{"input_tokens":1,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":1}}}"#)
+        let turns = parser.turns(sessionId: "s")
+        XCTAssertEqual(turns.map(\.requestId), ["r1", "r2"])
+    }
+
+    func test_ingestEmitsSessionIdsForNewTurns() {
+        let parser = LogParser()
+        var touched: [String] = []
+        parser.onSessionUpdated = { sid in touched.append(sid) }
+        parser.ingest(line: #"{"type":"assistant","sessionId":"x","requestId":"r1","timestamp":"2026-04-21T10:00:00.000Z","message":{"model":"claude-opus-4-6","usage":{"input_tokens":1,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":1}}}"#)
+        XCTAssertEqual(touched, ["x"])
+    }
+}

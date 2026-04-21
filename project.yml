@@ -28,13 +28,20 @@ targets:
     platform: macOS
     sources:
       - path: PitsTests
+        excludes:
+          - "Fixtures/**/*.jsonl"
+      - path: PitsTests/Fixtures
+        type: folder
     dependencies:
       - target: Pits
     settings:
       base:
-        GENERATE_INFOPLIST_FILE: YES
         BUNDLE_LOADER: $(TEST_HOST)
         TEST_HOST: $(BUILT_PRODUCTS_DIR)/Pits.app/Contents/MacOS/Pits
+        # Test bundle has no custom Info.plist needs — let Xcode synthesize one.
+        # Overrides the project-level GENERATE_INFOPLIST_FILE: NO so the test
+        # target can code-sign without an explicit Info.plist file.
+        GENERATE_INFOPLIST_FILE: YES
 schemes:
   Pits:
     build:
