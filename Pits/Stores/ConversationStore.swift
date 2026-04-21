@@ -5,6 +5,9 @@ import Combine
 @MainActor
 final class ConversationStore: ObservableObject {
     @Published private(set) var conversations: [Conversation] = []
+    /// True while the initial backfill is still running. UI uses this to show
+    /// a loading state instead of the "no conversations" empty view.
+    @Published private(set) var isLoading: Bool = false
     @Published var ttlSeconds: TimeInterval {
         didSet { rebuildSnapshot() }
     }
@@ -35,14 +38,22 @@ final class ConversationStore: ObservableObject {
         self.watcher.onLines = { [weak self] url, lines in
             DispatchQueue.main.async { self?.handleLines(url: url, lines: lines) }
         }
-        // parser.onSessionUpdated is intentionally left unassigned — we rebuild
-        // exactly once per batch in handleLines, making per-turn callbacks redundant.
+        // Defer the snapshot rebuild until *all* files in a rescan have been
+        // ingested. On heavy users (1000+ JSONL files) this collapses 1000+
+        // per-file rebuilds into one per rescan pass.
+        self.watcher.onRescanComplete = { [weak self] in
+            DispatchQueue.main.async {
+                self?.rebuildSnapshot()
+                self?.isLoading = false
+            }
+        }
     }
 
     func start() {
         // Anything with a timestamp after this moment is "new" — anything
         // loaded during backfill is historical and does not chime.
         chimeCutoff = Date()
+        isLoading = true
         // Start live watching + the 1 Hz timer on main — both are non-blocking.
         watcher.start()
         startTimer()
@@ -69,8 +80,8 @@ final class ConversationStore: ObservableObject {
             let url = fileBySession[sid] ?? URL(fileURLWithPath: "/dev/null")
             let projectName = Conversation.projectName(from: url)
             result.append(Conversation(
-                id: sid, projectName: projectName, filePath: url,
-                turns: turns, ttlSeconds: ttlSeconds
+                id: sid, projectName: projectName, title: parser.title(sessionId: sid),
+                filePath: url, turns: turns, ttlSeconds: ttlSeconds
             ))
         }
         result.sort { $0.lastActivityTimestamp > $1.lastActivityTimestamp }
@@ -81,10 +92,16 @@ final class ConversationStore: ObservableObject {
 
     func ingestForTesting(url: URL, line: String) {
         handleLines(url: url, lines: [line])
+        rebuildSnapshot()
     }
 
     func ingestBatchForTesting(url: URL, lines: [String]) {
         handleLines(url: url, lines: lines)
+        rebuildSnapshot()
+    }
+
+    func setChimeCutoffForTesting(_ date: Date) {
+        chimeCutoff = date
     }
 
     // MARK: - Private
@@ -96,16 +113,24 @@ final class ConversationStore: ObservableObject {
                 switch entry {
                 case .turn(let t): sid = t.sessionId
                 case .human(let h): sid = h.sessionId
+                case .title(let st): sid = st.sessionId
                 }
                 if fileBySession[sid] == nil { fileBySession[sid] = url }
-                if case .turn(let t) = entry, t.timestamp > chimeCutoff {
+                // Chime only on *final* turns — the ones a human would notice
+                // as "Claude is done talking". Intermediate tool_use turns (and
+                // streaming fragments with no stop_reason yet) stay silent.
+                if case .turn(let t) = entry,
+                   t.timestamp > chimeCutoff,
+                   let stop = t.stopReason, stop != "tool_use" {
                     sound.playMessageReceived()
                     onNewTurn?(t)
                 }
             }
             parser.ingest(line: line)
         }
-        rebuildSnapshot()
+        // No per-file rebuild: the watcher's onRescanComplete drives a single
+        // rebuild at the end of the rescan pass. Tests go through
+        // ingestForTesting / ingestBatchForTesting, which explicitly rebuild.
     }
 
     private func startTimer() {

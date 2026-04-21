@@ -8,12 +8,30 @@ struct Conversation: Identifiable, Equatable {
     let id: String
     /// Human-readable project path, parsed from the enclosing directory.
     let projectName: String
+    /// AI-generated session title, if Claude Code has written one yet.
+    let title: String?
     /// JSONL file backing this session.
     let filePath: URL
     /// All retained turns, in chronological order.
     let turns: [Turn]
     /// Cache TTL in seconds (configurable via settings).
     let ttlSeconds: TimeInterval
+
+    init(
+        id: String,
+        projectName: String,
+        title: String? = nil,
+        filePath: URL,
+        turns: [Turn],
+        ttlSeconds: TimeInterval
+    ) {
+        self.id = id
+        self.projectName = projectName
+        self.title = title
+        self.filePath = filePath
+        self.turns = turns
+        self.ttlSeconds = ttlSeconds
+    }
 
     // MARK: - Derived
 
@@ -56,12 +74,14 @@ struct Conversation: Identifiable, Equatable {
 
     /// Convert a JSONL file URL like
     /// `~/.claude/projects/-Users-jifarris-Projects-pits/abc.jsonl`
-    /// into a human-readable project path `/Users/jifarris/Projects/pits`.
-    /// The directory uses `-` as a path separator substitute.
+    /// into the project's leaf directory name, e.g. `pits`. Claude Code
+    /// encodes the full project path as a dash-separated directory; we decode
+    /// it back to a real path and keep only the last component so the row
+    /// label stays compact.
     static func projectName(from fileURL: URL) -> String {
         let dir = fileURL.deletingLastPathComponent().lastPathComponent
-        // Claude encodes slashes as dashes; leading slash is also a dash.
-        // e.g. "-Users-jifarris-Projects-pits" → "/Users/jifarris/Projects/pits"
-        return dir.replacingOccurrences(of: "-", with: "/")
+        // "-Users-jifarris-Projects-pits" → "/Users/jifarris/Projects/pits" → "pits"
+        let fullPath = dir.replacingOccurrences(of: "-", with: "/")
+        return URL(fileURLWithPath: fullPath).lastPathComponent
     }
 }
