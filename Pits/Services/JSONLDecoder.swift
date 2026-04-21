@@ -78,6 +78,9 @@ enum JSONLDecoder {
             return !str.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         }
         if let arr = content as? [[String: Any]] {
+            // Parity with gh-claude-costs/extract.py:is_human_turn — a user entry
+            // counts as a human turn iff it has any text block and is not purely
+            // tool-result continuations.
             let hasText = arr.contains { ($0["type"] as? String) == "text" }
             let allToolResults = !arr.isEmpty && arr.allSatisfy { ($0["type"] as? String) == "tool_result" }
             return hasText && !allToolResults

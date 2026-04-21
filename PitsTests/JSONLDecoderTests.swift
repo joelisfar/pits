@@ -61,4 +61,12 @@ final class JSONLDecoderTests: XCTestCase {
         XCTAssertNil(decode("not json"))
         XCTAssertNil(decode(""))
     }
+
+    func test_humanTurn_mixedTextAndToolResult_isHuman() {
+        // Defensive pin: an array with both text and tool_result blocks counts as
+        // a human turn, matching the Python reference. If this behavior ever
+        // needs to change, update this test AND extract.py together.
+        let line = #"{"type":"user","sessionId":"s","timestamp":"2026-04-21T10:00:00.000Z","message":{"content":[{"type":"tool_result","tool_use_id":"x"},{"type":"text","text":"and also..."}]}}"#
+        guard case .human = decode(line) else { return XCTFail("expected human") }
+    }
 }
