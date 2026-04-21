@@ -22,6 +22,9 @@ fi
 
 echo "→ killing any running Pits"
 pkill -x Pits 2>/dev/null || true
+# LaunchServices briefly holds the old bundle after SIGTERM — give it a
+# moment before re-opening, otherwise `open` can fail with error -600.
+sleep 1
 
 echo "→ launching $APP"
 open "$APP"
