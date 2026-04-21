@@ -32,12 +32,11 @@ final class ConversationStore: ObservableObject {
         self.ttlSeconds = ttlSeconds
         self.sound = sound
         self.watcher = LogWatcher(rootDirectory: rootDirectory)
-        self.watcher.onLine = { [weak self] url, line in
-            DispatchQueue.main.async { self?.handleLine(url: url, line: line) }
+        self.watcher.onLines = { [weak self] url, lines in
+            DispatchQueue.main.async { self?.handleLines(url: url, lines: lines) }
         }
-        self.parser.onSessionUpdated = { [weak self] _ in
-            DispatchQueue.main.async { self?.rebuildSnapshot() }
-        }
+        // parser.onSessionUpdated is intentionally left unassigned — we rebuild
+        // exactly once per batch in handleLines, making per-turn callbacks redundant.
     }
 
     func start() {
@@ -78,28 +77,34 @@ final class ConversationStore: ObservableObject {
         conversations = result
     }
 
-    // MARK: - Testing hook
+    // MARK: - Testing hooks
 
     func ingestForTesting(url: URL, line: String) {
-        handleLine(url: url, line: line)
+        handleLines(url: url, lines: [line])
+    }
+
+    func ingestBatchForTesting(url: URL, lines: [String]) {
+        handleLines(url: url, lines: lines)
     }
 
     // MARK: - Private
 
-    private func handleLine(url: URL, line: String) {
-        if let entry = JSONLDecoder.decode(line: line) {
-            let sid: String
-            switch entry {
-            case .turn(let t): sid = t.sessionId
-            case .human(let h): sid = h.sessionId
+    private func handleLines(url: URL, lines: [String]) {
+        for line in lines {
+            if let entry = JSONLDecoder.decode(line: line) {
+                let sid: String
+                switch entry {
+                case .turn(let t): sid = t.sessionId
+                case .human(let h): sid = h.sessionId
+                }
+                if fileBySession[sid] == nil { fileBySession[sid] = url }
+                if case .turn(let t) = entry, t.timestamp > chimeCutoff {
+                    sound.playMessageReceived()
+                    onNewTurn?(t)
+                }
             }
-            if fileBySession[sid] == nil { fileBySession[sid] = url }
-            if case .turn(let t) = entry, t.timestamp > chimeCutoff {
-                sound.playMessageReceived()
-                onNewTurn?(t)
-            }
+            parser.ingest(line: line)
         }
-        parser.ingest(line: line)
         rebuildSnapshot()
     }
 
