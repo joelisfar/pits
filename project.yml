@@ -1,0 +1,53 @@
+name: Pits
+options:
+  bundleIdPrefix: net.farriswheel
+  deploymentTarget:
+    macOS: "14.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    SWIFT_VERSION: "5.9"
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    GENERATE_INFOPLIST_FILE: NO
+targets:
+  Pits:
+    type: application
+    platform: macOS
+    sources:
+      - path: Pits
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: net.farriswheel.Pits
+        INFOPLIST_FILE: Pits/Info.plist
+        CODE_SIGN_STYLE: Automatic
+        CODE_SIGN_IDENTITY: "-"
+        ENABLE_HARDENED_RUNTIME: YES
+  PitsTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: PitsTests
+        excludes:
+          - "Fixtures/**/*.jsonl"
+      - path: PitsTests/Fixtures
+        type: folder
+    dependencies:
+      - target: Pits
+    settings:
+      base:
+        BUNDLE_LOADER: $(TEST_HOST)
+        TEST_HOST: $(BUILT_PRODUCTS_DIR)/Pits.app/Contents/MacOS/Pits
+        # Test bundle has no custom Info.plist needs — let Xcode synthesize one.
+        # Overrides the project-level GENERATE_INFOPLIST_FILE: NO so the test
+        # target can code-sign without an explicit Info.plist file.
+        GENERATE_INFOPLIST_FILE: YES
+schemes:
+  Pits:
+    build:
+      targets:
+        Pits: all
+        PitsTests: [test]
+    test:
+      targets:
+        - PitsTests
