@@ -1,7 +1,7 @@
 import Foundation
 
 /// A single assistant API response parsed from a JSONL line.
-struct Turn: Identifiable, Equatable {
+struct Turn: Identifiable, Equatable, Codable {
     let requestId: String
     let sessionId: String
     let timestamp: Date
