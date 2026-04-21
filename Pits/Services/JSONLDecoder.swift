@@ -4,6 +4,7 @@ import Foundation
 enum JSONLEntry {
     case turn(Turn)
     case human(HumanTurn)
+    case title(SessionTitle)
 }
 
 /// Marker for a human turn (used by the classifier, not displayed).
@@ -12,6 +13,13 @@ struct HumanTurn {
     let timestamp: Date
     let isSubagent: Bool
     let agentId: String?
+}
+
+/// AI-generated session title — written as a one-shot `{"type":"ai-title",...}`
+/// entry in the JSONL by Claude Code once the first few turns are summarized.
+struct SessionTitle {
+    let sessionId: String
+    let title: String
 }
 
 enum JSONLDecoder {
@@ -27,8 +35,17 @@ enum JSONLDecoder {
         guard let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return nil }
 
         guard let type = obj["type"] as? String else { return nil }
-        guard let ts = parseTimestamp(obj["timestamp"] as? String) else { return nil }
         let sessionId = obj["sessionId"] as? String ?? ""
+
+        // ai-title entries carry no timestamp — handle before the timestamp guard.
+        if type == "ai-title" {
+            guard !sessionId.isEmpty,
+                  let title = obj["aiTitle"] as? String,
+                  !title.isEmpty else { return nil }
+            return .title(SessionTitle(sessionId: sessionId, title: title))
+        }
+
+        guard let ts = parseTimestamp(obj["timestamp"] as? String) else { return nil }
         let agentId = obj["agentId"] as? String
         let isSubagent = agentId != nil
 

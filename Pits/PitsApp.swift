@@ -23,7 +23,7 @@ struct PitsApp: App {
                 }
                 .onDisappear { store.stop() }
         }
-        .defaultSize(width: 480, height: 360)
+        .defaultSize(width: 580, height: 420)
         .windowResizability(.contentMinSize)
 
         Settings {
