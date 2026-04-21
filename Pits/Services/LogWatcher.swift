@@ -1,0 +1,151 @@
+import Foundation
+import CoreServices
+
+/// Watches a directory tree for `.jsonl` file changes.
+/// Exposes `onLine(url, line)` for every newly appended complete line.
+/// Call `backfill()` once at startup to emit every existing line.
+/// Call `start()` to begin live watching via FSEvents; `rescan()` is called automatically on events.
+final class LogWatcher {
+    private let rootDirectory: URL
+    private var offsets: [URL: UInt64] = [:]
+    private var partials: [URL: Data] = [:]
+    private var stream: FSEventStreamRef?
+    private let queue = DispatchQueue(label: "net.farriswheel.Pits.LogWatcher")
+
+    var onLine: ((URL, String) -> Void)?
+
+    init(rootDirectory: URL) {
+        self.rootDirectory = rootDirectory
+    }
+
+    deinit { stop() }
+
+    // MARK: - Public API
+
+    /// Read every line from every discovered JSONL file from its current offset.
+    func backfill() {
+        queue.sync { self.rescanLocked() }
+    }
+
+    /// Re-scan all discovered JSONL files for newly appended data.
+    /// Safe to call from the FSEvents callback or manually in tests.
+    func rescan() {
+        queue.sync { self.rescanLocked() }
+    }
+
+    func start() {
+        guard stream == nil else { return }
+        let cfPaths = [rootDirectory.path] as CFArray
+        var context = FSEventStreamContext(
+            version: 0,
+            info: Unmanaged.passUnretained(self).toOpaque(),
+            retain: nil, release: nil, copyDescription: nil
+        )
+        let callback: FSEventStreamCallback = { _, info, _, _, _, _ in
+            guard let info else { return }
+            let watcher = Unmanaged<LogWatcher>.fromOpaque(info).takeUnretainedValue()
+            watcher.rescan()
+        }
+        let flags = UInt32(kFSEventStreamCreateFlagFileEvents | kFSEventStreamCreateFlagNoDefer)
+        guard let s = FSEventStreamCreate(
+            kCFAllocatorDefault,
+            callback,
+            &context,
+            cfPaths,
+            UInt64(kFSEventStreamEventIdSinceNow),
+            0.5,  // latency: 500ms coalescing
+            flags
+        ) else { return }
+        FSEventStreamSetDispatchQueue(s, queue)
+        FSEventStreamStart(s)
+        stream = s
+    }
+
+    func stop() {
+        if let s = stream {
+            FSEventStreamStop(s)
+            FSEventStreamInvalidate(s)
+            FSEventStreamRelease(s)
+            stream = nil
+        }
+    }
+
+    // MARK: - Private
+
+    private func rescanLocked() {
+        let files = discoverFiles()
+        for url in files {
+            readNewBytes(from: url)
+        }
+    }
+
+    private func discoverFiles() -> [URL] {
+        let fm = FileManager.default
+        guard let enumerator = fm.enumerator(
+            at: rootDirectory,
+            includingPropertiesForKeys: [.isRegularFileKey],
+            options: [.skipsHiddenFiles]
+        ) else { return [] }
+
+        // The enumerator may resolve symlinks (e.g. /var -> /private/var on macOS),
+        // producing URLs that differ lexically from the configured rootDirectory.
+        // Re-base each result onto the configured root so callers see URLs that
+        // match URLs they construct from the same rootDirectory.
+        let resolvedRoot = rootDirectory.resolvingSymlinksInPath().path
+        let configuredRoot = rootDirectory.path
+
+        var results: [URL] = []
+        for case let url as URL in enumerator {
+            guard url.pathExtension == "jsonl" else { continue }
+            let resolvedPath = url.resolvingSymlinksInPath().path
+            if resolvedPath.hasPrefix(resolvedRoot + "/") {
+                let suffix = String(resolvedPath.dropFirst(resolvedRoot.count + 1))
+                results.append(URL(fileURLWithPath: configuredRoot).appendingPathComponent(suffix))
+            } else {
+                results.append(url)
+            }
+        }
+        return results
+    }
+
+    private func readNewBytes(from url: URL) {
+        let offset = offsets[url] ?? 0
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return }
+        defer { try? handle.close() }
+
+        do {
+            try handle.seek(toOffset: offset)
+        } catch {
+            // File shrunk (rotated?) — restart from 0.
+            offsets[url] = 0
+            partials[url] = nil
+            return
+        }
+
+        let newBytes = (try? handle.readToEnd()) ?? Data()
+        guard !newBytes.isEmpty else { return }
+
+        let newEnd = (try? handle.offset()) ?? (offset + UInt64(newBytes.count))
+        offsets[url] = newEnd
+
+        var buffer = partials[url] ?? Data()
+        buffer.append(newBytes)
+
+        // Split on \n. Keep trailing partial (if any) in the buffer.
+        let nl: UInt8 = 0x0A
+        var lines: [Data] = []
+        var start = buffer.startIndex
+        for i in buffer.indices where buffer[i] == nl {
+            lines.append(buffer[start..<i])
+            start = buffer.index(after: i)
+        }
+        let trailing = Data(buffer[start..<buffer.endIndex])
+        partials[url] = trailing.isEmpty ? nil : trailing
+
+        for lineData in lines {
+            if let line = String(data: lineData, encoding: .utf8), !line.isEmpty {
+                onLine?(url, line)
+            }
+        }
+    }
+}
