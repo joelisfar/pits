@@ -8,12 +8,30 @@ struct Conversation: Identifiable, Equatable {
     let id: String
     /// Human-readable project path, parsed from the enclosing directory.
     let projectName: String
+    /// AI-generated session title, if Claude Code has written one yet.
+    let title: String?
     /// JSONL file backing this session.
     let filePath: URL
     /// All retained turns, in chronological order.
     let turns: [Turn]
     /// Cache TTL in seconds (configurable via settings).
     let ttlSeconds: TimeInterval
+
+    init(
+        id: String,
+        projectName: String,
+        title: String? = nil,
+        filePath: URL,
+        turns: [Turn],
+        ttlSeconds: TimeInterval
+    ) {
+        self.id = id
+        self.projectName = projectName
+        self.title = title
+        self.filePath = filePath
+        self.turns = turns
+        self.ttlSeconds = ttlSeconds
+    }
 
     // MARK: - Derived
 

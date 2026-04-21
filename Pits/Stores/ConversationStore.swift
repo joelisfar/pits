@@ -69,8 +69,8 @@ final class ConversationStore: ObservableObject {
             let url = fileBySession[sid] ?? URL(fileURLWithPath: "/dev/null")
             let projectName = Conversation.projectName(from: url)
             result.append(Conversation(
-                id: sid, projectName: projectName, filePath: url,
-                turns: turns, ttlSeconds: ttlSeconds
+                id: sid, projectName: projectName, title: parser.title(sessionId: sid),
+                filePath: url, turns: turns, ttlSeconds: ttlSeconds
             ))
         }
         result.sort { $0.lastActivityTimestamp > $1.lastActivityTimestamp }
@@ -87,6 +87,10 @@ final class ConversationStore: ObservableObject {
         handleLines(url: url, lines: lines)
     }
 
+    func setChimeCutoffForTesting(_ date: Date) {
+        chimeCutoff = date
+    }
+
     // MARK: - Private
 
     private func handleLines(url: URL, lines: [String]) {
@@ -96,9 +100,15 @@ final class ConversationStore: ObservableObject {
                 switch entry {
                 case .turn(let t): sid = t.sessionId
                 case .human(let h): sid = h.sessionId
+                case .title(let st): sid = st.sessionId
                 }
                 if fileBySession[sid] == nil { fileBySession[sid] = url }
-                if case .turn(let t) = entry, t.timestamp > chimeCutoff {
+                // Chime only on *final* turns — the ones a human would notice
+                // as "Claude is done talking". Intermediate tool_use turns (and
+                // streaming fragments with no stop_reason yet) stay silent.
+                if case .turn(let t) = entry,
+                   t.timestamp > chimeCutoff,
+                   let stop = t.stopReason, stop != "tool_use" {
                     sound.playMessageReceived()
                     onNewTurn?(t)
                 }

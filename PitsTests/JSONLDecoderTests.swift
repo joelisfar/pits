@@ -57,6 +57,19 @@ final class JSONLDecoderTests: XCTestCase {
         XCTAssertNil(decode(#"{"type":"system","subtype":"compact_boundary","timestamp":"2026-04-21T10:00:00.000Z"}"#))
     }
 
+    func test_aiTitle_decodes() {
+        let line = #"{"type":"ai-title","sessionId":"s1","aiTitle":"Batch main thread redraws to fix UI beach-ball"}"#
+        guard case .title(let t) = decode(line) else { return XCTFail("expected title") }
+        XCTAssertEqual(t.sessionId, "s1")
+        XCTAssertEqual(t.title, "Batch main thread redraws to fix UI beach-ball")
+    }
+
+    func test_aiTitle_missingFields_isNil() {
+        XCTAssertNil(decode(#"{"type":"ai-title","sessionId":"s1"}"#))
+        XCTAssertNil(decode(#"{"type":"ai-title","aiTitle":"hi"}"#))
+        XCTAssertNil(decode(#"{"type":"ai-title","sessionId":"","aiTitle":"hi"}"#))
+    }
+
     func test_malformedJson_isNil() {
         XCTAssertNil(decode("not json"))
         XCTAssertNil(decode(""))

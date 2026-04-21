@@ -11,21 +11,15 @@ struct SettingsView: View {
     var body: some View {
         Form {
             Section("Cache") {
-                HStack {
-                    Text("TTL duration")
-                    Slider(
-                        value: Binding(
-                            get: { ttlSeconds },
-                            set: { new in
-                                ttlSeconds = new
-                                store.ttlSeconds = new
-                            }
-                        ),
-                        in: 60...1800, step: 30
-                    )
-                    Text("\(Int(ttlSeconds))s")
-                        .font(.system(.body, design: .monospaced))
-                        .frame(width: 60, alignment: .trailing)
+                Picker("TTL", selection: Binding(
+                    get: { [300.0, 3600.0].contains(ttlSeconds) ? ttlSeconds : 300.0 },
+                    set: { new in
+                        ttlSeconds = new
+                        store.ttlSeconds = new
+                    }
+                )) {
+                    Text("5 minutes").tag(300.0)
+                    Text("1 hour").tag(3600.0)
                 }
             }
 

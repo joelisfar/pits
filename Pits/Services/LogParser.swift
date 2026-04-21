@@ -6,6 +6,7 @@ import Foundation
 final class LogParser {
     private var turnsByRequestId: [String: Turn] = [:]
     private var humanTurnsBySession: [String: [HumanTurn]] = [:]
+    private var titleBySession: [String: String] = [:]
 
     /// Called whenever a session's turn list changes. sessionId passed in.
     var onSessionUpdated: ((String) -> Void)?
@@ -17,6 +18,10 @@ final class LogParser {
             ingestTurn(t)
         case .human(let h):
             humanTurnsBySession[h.sessionId, default: []].append(h)
+        case .title(let st):
+            // Claude Code occasionally overwrites the title mid-session; take
+            // the most recently seen value.
+            titleBySession[st.sessionId] = st.title
         }
     }
 
@@ -44,6 +49,11 @@ final class LogParser {
     /// All human turns for a session, sorted chronologically. Used by the classifier.
     func humanTurns(sessionId: String) -> [HumanTurn] {
         (humanTurnsBySession[sessionId] ?? []).sorted { $0.timestamp < $1.timestamp }
+    }
+
+    /// AI-generated title for a session, if one has been seen.
+    func title(sessionId: String) -> String? {
+        titleBySession[sessionId]
     }
 
     /// All session IDs currently tracked.

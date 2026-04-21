@@ -32,12 +32,28 @@ struct ConversationRowView: View {
                 .fill(accent)
                 .frame(width: 8, height: 8)
 
-            // Project path — truncate from the head so the leaf is visible.
-            Text(conversation.projectName)
-                .font(.system(.body, design: .default))
-                .lineLimit(1)
-                .truncationMode(.head)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            // Primary label: AI-generated title if present, falling back to the
+            // project path. When a title is shown, the project path sits beneath
+            // it as a dimmed subtitle.
+            VStack(alignment: .leading, spacing: 1) {
+                if let title = conversation.title {
+                    Text(title)
+                        .font(.system(.body, design: .default))
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                    Text(conversation.projectName)
+                        .font(.system(.caption2, design: .default))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.head)
+                } else {
+                    Text(conversation.projectName)
+                        .font(.system(.body, design: .default))
+                        .lineLimit(1)
+                        .truncationMode(.head)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
 
             VStack(alignment: .trailing, spacing: 2) {
                 Text(formatCost(conversation.totalCost))
@@ -73,6 +89,7 @@ struct ConversationRowView: View {
     )
     let c = Conversation(
         id: "s", projectName: "/Users/j/Projects/demo",
+        title: "Wire session titles into the row view",
         filePath: URL(fileURLWithPath: "/tmp/x.jsonl"),
         turns: [turn], ttlSeconds: 300
     )
