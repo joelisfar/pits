@@ -12,6 +12,15 @@ final class LogWatcher {
     private var stream: FSEventStreamRef?
     private let queue = DispatchQueue(label: "net.farriswheel.Pits.LogWatcher")
 
+    /// When set, `discoverFiles()` only returns JSONL files whose modification
+    /// time is at or after this date. Use this to limit initial backfill to a
+    /// recent window. Thread-safe: always read/written on `queue`.
+    private var _minMtime: Date?
+    var minMtime: Date? {
+        get { queue.sync { _minMtime } }
+        set { queue.sync { _minMtime = newValue } }
+    }
+
     /// Invoked on the LogWatcher's internal serial queue once per
     /// `readNewBytes(from:)` call with all complete lines discovered in that
     /// pass (per-file, per-rescan batching). Not invoked with an empty array.
@@ -113,7 +122,7 @@ final class LogWatcher {
         let fm = FileManager.default
         guard let enumerator = fm.enumerator(
             at: rootDirectory,
-            includingPropertiesForKeys: [.isRegularFileKey],
+            includingPropertiesForKeys: [.isRegularFileKey, .contentModificationDateKey],
             options: [.skipsHiddenFiles]
         ) else { return [] }
 
@@ -123,10 +132,32 @@ final class LogWatcher {
         // match URLs they construct from the same rootDirectory.
         let resolvedRoot = rootDirectory.resolvingSymlinksInPath().path
         let configuredRoot = rootDirectory.path
+        let cutoff = _minMtime
 
         var results: [URL] = []
         for case let url as URL in enumerator {
             guard url.pathExtension == "jsonl" else { continue }
+            if let cutoff {
+                // A file stays in the result set if (a) its mtime is at/after
+                // the cutoff, OR (b) we've already read bytes from it (so we
+                // need to keep tracking for further appends). The latter
+                // avoids losing live updates on an older file that has just
+                // been appended to.
+                let resolvedForOffsetLookup = url.resolvingSymlinksInPath().path
+                let reboasedForOffsetLookup: URL
+                if resolvedForOffsetLookup.hasPrefix(resolvedRoot + "/") {
+                    let suffix = String(resolvedForOffsetLookup.dropFirst(resolvedRoot.count + 1))
+                    reboasedForOffsetLookup = URL(fileURLWithPath: configuredRoot).appendingPathComponent(suffix)
+                } else {
+                    reboasedForOffsetLookup = url
+                }
+                let alreadyTracked = offsets[reboasedForOffsetLookup] != nil
+                if !alreadyTracked {
+                    let mtime = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?
+                        .contentModificationDate
+                    if let mtime, mtime < cutoff { continue }
+                }
+            }
             let resolvedPath = url.resolvingSymlinksInPath().path
             if resolvedPath.hasPrefix(resolvedRoot + "/") {
                 let suffix = String(resolvedPath.dropFirst(resolvedRoot.count + 1))

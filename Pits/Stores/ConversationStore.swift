@@ -8,6 +8,13 @@ final class ConversationStore: ObservableObject {
     /// True while the initial backfill is still running. UI uses this to show
     /// a loading state instead of the "no conversations" empty view.
     @Published private(set) var isLoading: Bool = false
+    /// How many days back we've loaded (1 = today only). `loadMoreDays()`
+    /// bumps this; the watcher's `minMtime` is derived from it.
+    @Published private(set) var daysLoaded: Int = 1
+    /// Number of additional one-day chunks still queued for progressive load.
+    /// Drives the chain of loads that runs each day sequentially so the UI
+    /// gets a visible step per day instead of one long wait at the end.
+    @Published private(set) var pendingLoadDays: Int = 0
     @Published var ttlSeconds: TimeInterval {
         didSet { rebuildSnapshot() }
     }
@@ -43,8 +50,17 @@ final class ConversationStore: ObservableObject {
         // per-file rebuilds into one per rescan pass.
         self.watcher.onRescanComplete = { [weak self] in
             DispatchQueue.main.async {
-                self?.rebuildSnapshot()
-                self?.isLoading = false
+                guard let self else { return }
+                self.rebuildSnapshot()
+                // If the user requested a multi-day load, queue the next
+                // one-day chunk so each day pops in individually instead of
+                // the whole batch landing at the end.
+                if self.pendingLoadDays > 0 {
+                    self.pendingLoadDays -= 1
+                    self.runOneDayChunk()
+                } else {
+                    self.isLoading = false
+                }
             }
         }
     }
@@ -54,17 +70,46 @@ final class ConversationStore: ObservableObject {
         // loaded during backfill is historical and does not chime.
         chimeCutoff = Date()
         isLoading = true
+        // Initial load: today plus the previous 6 days, delivered
+        // progressively one day at a time so the list pops in as each day
+        // finishes instead of waiting for the whole week at the end.
+        pendingLoadDays = 6
+        watcher.minMtime = Self.cutoffDate(daysBack: daysLoaded)
         // Start live watching + the 1 Hz timer on main — both are non-blocking.
         watcher.start()
         startTimer()
-        // Backfill reads every JSONL under ~/.claude/projects/ and can take
-        // many seconds on heavy users. Run it off the main thread so the UI
-        // is responsive immediately; lines will stream in via watcher.onLine
-        // (which already hops back to main).
         let w = watcher
         DispatchQueue.global(qos: .userInitiated).async {
             w.backfill()
         }
+    }
+
+    /// Extend the loaded window by `n` days. Loads proceed *one day at a
+    /// time* so the list visibly grows day-by-day instead of beach-balling
+    /// until all `n` days arrive together. Each chunk triggers its own
+    /// `rebuildSnapshot()` via `onRescanComplete`.
+    func loadMoreDays(_ n: Int = 7) {
+        guard n > 0 else { return }
+        isLoading = true
+        pendingLoadDays = n - 1
+        runOneDayChunk()
+    }
+
+    /// Extend the mtime window by exactly one more day and kick the watcher.
+    /// Called recursively via `onRescanComplete` while `pendingLoadDays > 0`.
+    private func runOneDayChunk() {
+        daysLoaded += 1
+        watcher.minMtime = Self.cutoffDate(daysBack: daysLoaded)
+        let w = watcher
+        DispatchQueue.global(qos: .userInitiated).async {
+            w.backfill()
+        }
+    }
+
+    private static func cutoffDate(daysBack: Int) -> Date {
+        let cal = Calendar.current
+        let startOfToday = cal.startOfDay(for: Date())
+        return cal.date(byAdding: .day, value: -(daysBack - 1), to: startOfToday) ?? startOfToday
     }
 
     func stop() {
@@ -74,14 +119,20 @@ final class ConversationStore: ObservableObject {
     }
 
     func rebuildSnapshot() {
+        // Subagent turns share the parent session's `sessionId` (only the
+        // per-line `agentId`/`isSubagent` flag distinguishes them), so one
+        // session id → one Conversation whose `turns` already contain both
+        // parent and subagent work. Subagent presentation is done in the view
+        // layer via `Conversation.subagentTurns`.
         var result: [Conversation] = []
         for sid in parser.sessionIds() {
             let turns = parser.turns(sessionId: sid)
+            let humans = parser.humanTurns(sessionId: sid)
             let url = fileBySession[sid] ?? URL(fileURLWithPath: "/dev/null")
             let projectName = Conversation.projectName(from: url)
             result.append(Conversation(
                 id: sid, projectName: projectName, title: parser.title(sessionId: sid),
-                filePath: url, turns: turns, ttlSeconds: ttlSeconds
+                filePath: url, turns: turns, humanTurns: humans, ttlSeconds: ttlSeconds
             ))
         }
         result.sort { $0.lastActivityTimestamp > $1.lastActivityTimestamp }
