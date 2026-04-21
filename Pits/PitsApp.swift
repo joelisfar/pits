@@ -12,7 +12,7 @@ struct PitsApp: App {
     }
 
     var body: some Scene {
-        WindowGroup("Pits") {
+        WindowGroup("Pits", id: "pits-main") {
             ConversationListView(store: store)
                 .onAppear {
                     // Skip starting the live watcher when running under XCTest —
@@ -23,6 +23,7 @@ struct PitsApp: App {
                 }
                 .onDisappear { store.stop() }
         }
+        .defaultSize(width: 480, height: 360)
         .windowResizability(.contentMinSize)
 
         Settings {
