@@ -35,13 +35,7 @@ final class SnapshotCache {
             pendingWorkItem?.cancel()
             pendingWorkItem = nil
         }
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        let data = try encoder.encode(state)
-        // Ensure parent directory exists (Caches dir is normally present).
-        let parent = fileURL.deletingLastPathComponent()
-        try? FileManager.default.createDirectory(at: parent, withIntermediateDirectories: true)
-        try data.write(to: fileURL, options: .atomic)
+        try writeToDisk(state)
     }
 
     /// Debounced write. Multiple calls within `debounceInterval` collapse
@@ -51,14 +45,27 @@ final class SnapshotCache {
             self.pendingWorkItem?.cancel()
             let item = DispatchWorkItem { [weak self] in
                 guard let self else { return }
+                // Already on `queue` here — call writeToDisk directly so we
+                // don't re-enter via saveNow's queue.sync (would deadlock).
                 do {
-                    try self.saveNow(state)
+                    try self.writeToDisk(state)
                 } catch {
                     os_log("snapshot cache write failed: %{public}@", log: Self.log, type: .error, String(describing: error))
                 }
+                self.pendingWorkItem = nil
             }
             self.pendingWorkItem = item
             self.queue.asyncAfter(deadline: .now() + self.debounceInterval, execute: item)
         }
+    }
+
+    private func writeToDisk(_ state: PersistedState) throws {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let data = try encoder.encode(state)
+        // Ensure parent directory exists (Caches dir is normally present).
+        let parent = fileURL.deletingLastPathComponent()
+        try? FileManager.default.createDirectory(at: parent, withIntermediateDirectories: true)
+        try data.write(to: fileURL, options: .atomic)
     }
 }

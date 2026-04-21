@@ -63,4 +63,48 @@ final class SnapshotCacheTests: XCTestCase {
         try cache.saveNow(sampleState(version: 999))
         XCTAssertNil(cache.load())
     }
+
+    func test_scheduleSave_debouncesMultipleCalls() throws {
+        let cache = SnapshotCache(fileURL: cacheURL, debounceInterval: 0.2)
+        let state = sampleState()
+        for _ in 0..<5 {
+            cache.scheduleSave(state)
+        }
+        // No write yet (debounce window still open).
+        XCTAssertFalse(FileManager.default.fileExists(atPath: cacheURL.path))
+
+        // Wait for the debounce to elapse + a small grace period.
+        let exp = expectation(description: "debounce fires")
+        DispatchQueue.global().asyncAfter(deadline: .now() + 0.5) { exp.fulfill() }
+        wait(for: [exp], timeout: 1.0)
+
+        XCTAssertTrue(FileManager.default.fileExists(atPath: cacheURL.path))
+        XCTAssertEqual(cache.load(), state)
+    }
+
+    func test_saveNow_cancelsPendingDebounce() throws {
+        let cache = SnapshotCache(fileURL: cacheURL, debounceInterval: 5.0)
+        let s1 = sampleState()
+        cache.scheduleSave(s1)
+        // Immediately call saveNow with a different state.
+        let s2 = PersistedState(
+            schemaVersion: s1.schemaVersion,
+            savedAt: s1.savedAt,
+            daysLoaded: 14,  // changed
+            fileBySession: s1.fileBySession,
+            offsets: s1.offsets,
+            parser: s1.parser
+        )
+        try cache.saveNow(s2)
+
+        XCTAssertEqual(cache.load()?.daysLoaded, 14)
+
+        // Wait past a sane window — the cancelled scheduleSave must NOT
+        // overwrite the saveNow value with s1.
+        let exp = expectation(description: "no late write")
+        DispatchQueue.global().asyncAfter(deadline: .now() + 0.3) { exp.fulfill() }
+        wait(for: [exp], timeout: 1.0)
+
+        XCTAssertEqual(cache.load()?.daysLoaded, 14)
+    }
 }
