@@ -8,7 +8,7 @@ enum JSONLEntry {
 }
 
 /// Marker for a human turn (used by the classifier, not displayed).
-struct HumanTurn {
+struct HumanTurn: Equatable {
     let sessionId: String
     let timestamp: Date
     let isSubagent: Bool

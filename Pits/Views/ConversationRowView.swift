@@ -3,6 +3,9 @@ import SwiftUI
 struct ConversationRowView: View {
     let conversation: Conversation
     let now: Date
+    /// When non-nil the row is a parent with subagents — renders a chevron
+    /// the parent cell flips to expand/collapse. `nil` hides the chevron.
+    var isExpanded: Binding<Bool>? = nil
 
     private var status: CacheStatus { conversation.cacheStatus(at: now) }
     private var remaining: TimeInterval { conversation.cacheTTLRemaining(at: now) }
@@ -22,11 +25,30 @@ struct ConversationRowView: View {
     }
 
     private func formatCost(_ v: Double) -> String {
-        v >= 10.0 ? String(format: "$%.2f", v) : String(format: "$%.3f", v)
+        CostFormat.string(from: v)
     }
 
     var body: some View {
-        HStack(alignment: .center, spacing: 12) {
+        HStack(alignment: .center, spacing: 10) {
+            // Disclosure chevron — matches Finder's sidebar glyph.
+            if let isExpanded {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.15)) { isExpanded.wrappedValue.toggle() }
+                } label: {
+                    Image(systemName: "chevron.forward")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(.primary.opacity(0.7))
+                        .rotationEffect(.degrees(isExpanded.wrappedValue ? 90 : 0))
+                        .frame(width: 18, height: 18, alignment: .center)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            } else {
+                // Keep the row's start-of-content aligned whether or not
+                // there's a disclosure triangle.
+                Spacer().frame(width: 18)
+            }
+
             // Status dot
             Circle()
                 .fill(accent)
@@ -95,7 +117,7 @@ struct ConversationRowView: View {
         filePath: URL(fileURLWithPath: "/tmp/x.jsonl"),
         turns: [turn], ttlSeconds: 300
     )
-    return ConversationRowView(conversation: c, now: Date())
+    return ConversationRowView(conversation: c, now: Date(), isExpanded: .constant(false))
         .padding()
         .frame(width: 420)
 }

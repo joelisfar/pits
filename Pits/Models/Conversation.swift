@@ -16,6 +16,10 @@ struct Conversation: Identifiable, Equatable {
     let turns: [Turn]
     /// Cache TTL in seconds (configurable via settings).
     let ttlSeconds: TimeInterval
+    /// User messages in this session, chronological. The cache TTL resets
+    /// when a message is *sent*, not only when Claude replies, so these
+    /// timestamps drive the warm-countdown alongside assistant turns.
+    let humanTurns: [HumanTurn]
 
     init(
         id: String,
@@ -23,6 +27,7 @@ struct Conversation: Identifiable, Equatable {
         title: String? = nil,
         filePath: URL,
         turns: [Turn],
+        humanTurns: [HumanTurn] = [],
         ttlSeconds: TimeInterval
     ) {
         self.id = id
@@ -30,25 +35,57 @@ struct Conversation: Identifiable, Equatable {
         self.title = title
         self.filePath = filePath
         self.turns = turns
+        self.humanTurns = humanTurns
         self.ttlSeconds = ttlSeconds
     }
 
     // MARK: - Derived
 
+    /// Parent (non-subagent) turns only.
+    var ownTurns: [Turn] {
+        turns.filter { !$0.isSubagent }
+    }
+
+    /// Turns delegated to subagents. Same `sessionId` as the parent —
+    /// distinguished only by the per-line `agentId` / `isSubagent` flag.
+    var subagentTurns: [Turn] {
+        turns.filter { $0.isSubagent }
+    }
+
+    /// True when this conversation delegated any work to subagents.
+    var hasSubagentTurns: Bool { !subagentTurns.isEmpty }
+
+    /// Parent + subagent cost — what a human cares about for "what did this
+    /// conversation cost me".
     var totalCost: Double {
         turns.reduce(0.0) { $0 + $1.totalCost }
     }
 
+    /// Cost contributed only by subagent turns.
+    var subagentCost: Double {
+        subagentTurns.reduce(0.0) { $0 + $1.totalCost }
+    }
+
+    /// Last assistant timestamp across parent + subagent turns.
     var lastResponseTimestamp: Date? {
         turns.map(\.timestamp).max()
     }
 
+    /// Timestamp of the most recent interaction of any kind (human or
+    /// assistant) in this session. This is what drives the cache-TTL
+    /// countdown — a human message hitting the API resets the TTL even
+    /// before Claude finishes replying.
+    var lastTurnTimestamp: Date? {
+        let t = [lastResponseTimestamp, humanTurns.map(\.timestamp).max()].compactMap { $0 }
+        return t.max()
+    }
+
     var lastActivityTimestamp: Date {
-        lastResponseTimestamp ?? .distantPast
+        lastTurnTimestamp ?? .distantPast
     }
 
     func cacheTTLRemaining(at now: Date) -> TimeInterval {
-        guard let last = lastResponseTimestamp else { return 0 }
+        guard let last = lastTurnTimestamp else { return 0 }
         let elapsed = now.timeIntervalSince(last)
         return max(0, ttlSeconds - elapsed)
     }
@@ -79,9 +116,14 @@ struct Conversation: Identifiable, Equatable {
     /// it back to a real path and keep only the last component so the row
     /// label stays compact.
     static func projectName(from fileURL: URL) -> String {
-        let dir = fileURL.deletingLastPathComponent().lastPathComponent
+        // Subagent files live at: .../projects/-<proj>/<parent-id>/subagents/<child>.jsonl
+        // We want the project directory, not the "subagents" leaf or the parent-id dir.
+        var dir = fileURL.deletingLastPathComponent()
+        if dir.lastPathComponent == "subagents" {
+            dir = dir.deletingLastPathComponent().deletingLastPathComponent()
+        }
         // "-Users-jifarris-Projects-pits" → "/Users/jifarris/Projects/pits" → "pits"
-        let fullPath = dir.replacingOccurrences(of: "-", with: "/")
+        let fullPath = dir.lastPathComponent.replacingOccurrences(of: "-", with: "/")
         return URL(fileURLWithPath: fullPath).lastPathComponent
     }
 }
