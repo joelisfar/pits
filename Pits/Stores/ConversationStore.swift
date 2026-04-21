@@ -44,9 +44,17 @@ final class ConversationStore: ObservableObject {
         // Anything with a timestamp after this moment is "new" — anything
         // loaded during backfill is historical and does not chime.
         chimeCutoff = Date()
-        watcher.backfill()
+        // Start live watching + the 1 Hz timer on main — both are non-blocking.
         watcher.start()
         startTimer()
+        // Backfill reads every JSONL under ~/.claude/projects/ and can take
+        // many seconds on heavy users. Run it off the main thread so the UI
+        // is responsive immediately; lines will stream in via watcher.onLine
+        // (which already hops back to main).
+        let w = watcher
+        DispatchQueue.global(qos: .userInitiated).async {
+            w.backfill()
+        }
     }
 
     func stop() {
