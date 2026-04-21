@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 
 @main
 struct PitsApp: App {
@@ -8,7 +9,23 @@ struct PitsApp: App {
     init() {
         let ttl = UserDefaults.standard.object(forKey: "net.farriswheel.Pits.ttlSeconds") as? Double ?? 300
         let root = URL(fileURLWithPath: NSString(string: "~/.claude/projects").expandingTildeInPath)
-        _store = StateObject(wrappedValue: ConversationStore(rootDirectory: root, ttlSeconds: ttl))
+        let cacheURL = FileManager.default
+            .urls(for: .cachesDirectory, in: .userDomainMask)
+            .first!
+            .appendingPathComponent("state.json")
+        let cache = SnapshotCache(fileURL: cacheURL)
+        let s = ConversationStore(rootDirectory: root, ttlSeconds: ttl, cache: cache)
+        _store = StateObject(wrappedValue: s)
+
+        // Save before quit — WindowGroup.onDisappear is unreliable for app
+        // termination, so we observe the canonical AppKit notification.
+        NotificationCenter.default.addObserver(
+            forName: NSApplication.willTerminateNotification,
+            object: nil,
+            queue: .main
+        ) { [weak s] _ in
+            s?.stop()
+        }
     }
 
     var body: some Scene {
