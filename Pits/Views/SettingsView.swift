@@ -5,13 +5,14 @@ struct SettingsView: View {
     @ObservedObject var store: ConversationStore
     @AppStorage(SoundManager.soundsEnabledKey) private var soundsEnabled: Bool = true
     @AppStorage("net.farriswheel.Pits.ttlSeconds") private var ttlSeconds: Double = 300
+    @AppStorage("net.farriswheel.Pits.alwaysOnTop") private var alwaysOnTop: Bool = false
     @State private var launchAtLogin: Bool = (SMAppService.mainApp.status == .enabled)
     @State private var launchError: String?
 
     var body: some View {
         Form {
-            Section("Cache") {
-                Picker("TTL", selection: Binding(
+            Section {
+                Picker("Cache TTL:", selection: Binding(
                     get: { [300.0, 3600.0].contains(ttlSeconds) ? ttlSeconds : 300.0 },
                     set: { new in
                         ttlSeconds = new
@@ -23,11 +24,9 @@ struct SettingsView: View {
                 }
             }
 
-            Section("Sounds") {
+            Section {
                 Toggle("Play notification sounds", isOn: $soundsEnabled)
-            }
-
-            Section("Startup") {
+                Toggle("Keep window on top", isOn: $alwaysOnTop)
                 Toggle("Launch at login", isOn: Binding(
                     get: { launchAtLogin },
                     set: { on in
@@ -48,7 +47,8 @@ struct SettingsView: View {
                 }
             }
         }
-        .padding(20)
-        .frame(width: 420)
+        .formStyle(.grouped)
+        .scrollDisabled(true)
+        .frame(width: 440, height: 220)
     }
 }

@@ -20,7 +20,7 @@ final class ConversationTests: XCTestCase {
 
     func test_projectName_fromPath() {
         let url = URL(fileURLWithPath: "/Users/j/.claude/projects/-Users-jifarris-Projects-pits/abc.jsonl")
-        XCTAssertEqual(Conversation.projectName(from: url), "/Users/jifarris/Projects/pits")
+        XCTAssertEqual(Conversation.projectName(from: url), "pits")
     }
 
     func test_totalCost_sumOfTurns() {

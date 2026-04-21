@@ -21,7 +21,7 @@ final class ConversationStoreTests: XCTestCase {
         XCTAssertEqual(store.conversations.count, 1)
         let c = store.conversations[0]
         XCTAssertEqual(c.id, "s1")
-        XCTAssertEqual(c.projectName, "/Users/j/Projects/demo")
+        XCTAssertEqual(c.projectName, "demo")
         XCTAssertEqual(c.turns.count, 1)
     }
 

@@ -5,6 +5,9 @@ import Combine
 @MainActor
 final class ConversationStore: ObservableObject {
     @Published private(set) var conversations: [Conversation] = []
+    /// True while the initial backfill is still running. UI uses this to show
+    /// a loading state instead of the "no conversations" empty view.
+    @Published private(set) var isLoading: Bool = false
     @Published var ttlSeconds: TimeInterval {
         didSet { rebuildSnapshot() }
     }
@@ -35,14 +38,22 @@ final class ConversationStore: ObservableObject {
         self.watcher.onLines = { [weak self] url, lines in
             DispatchQueue.main.async { self?.handleLines(url: url, lines: lines) }
         }
-        // parser.onSessionUpdated is intentionally left unassigned — we rebuild
-        // exactly once per batch in handleLines, making per-turn callbacks redundant.
+        // Defer the snapshot rebuild until *all* files in a rescan have been
+        // ingested. On heavy users (1000+ JSONL files) this collapses 1000+
+        // per-file rebuilds into one per rescan pass.
+        self.watcher.onRescanComplete = { [weak self] in
+            DispatchQueue.main.async {
+                self?.rebuildSnapshot()
+                self?.isLoading = false
+            }
+        }
     }
 
     func start() {
         // Anything with a timestamp after this moment is "new" — anything
         // loaded during backfill is historical and does not chime.
         chimeCutoff = Date()
+        isLoading = true
         // Start live watching + the 1 Hz timer on main — both are non-blocking.
         watcher.start()
         startTimer()
@@ -81,10 +92,12 @@ final class ConversationStore: ObservableObject {
 
     func ingestForTesting(url: URL, line: String) {
         handleLines(url: url, lines: [line])
+        rebuildSnapshot()
     }
 
     func ingestBatchForTesting(url: URL, lines: [String]) {
         handleLines(url: url, lines: lines)
+        rebuildSnapshot()
     }
 
     func setChimeCutoffForTesting(_ date: Date) {
@@ -115,7 +128,9 @@ final class ConversationStore: ObservableObject {
             }
             parser.ingest(line: line)
         }
-        rebuildSnapshot()
+        // No per-file rebuild: the watcher's onRescanComplete drives a single
+        // rebuild at the end of the rescan pass. Tests go through
+        // ingestForTesting / ingestBatchForTesting, which explicitly rebuild.
     }
 
     private func startTimer() {

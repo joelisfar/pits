@@ -74,12 +74,14 @@ struct Conversation: Identifiable, Equatable {
 
     /// Convert a JSONL file URL like
     /// `~/.claude/projects/-Users-jifarris-Projects-pits/abc.jsonl`
-    /// into a human-readable project path `/Users/jifarris/Projects/pits`.
-    /// The directory uses `-` as a path separator substitute.
+    /// into the project's leaf directory name, e.g. `pits`. Claude Code
+    /// encodes the full project path as a dash-separated directory; we decode
+    /// it back to a real path and keep only the last component so the row
+    /// label stays compact.
     static func projectName(from fileURL: URL) -> String {
         let dir = fileURL.deletingLastPathComponent().lastPathComponent
-        // Claude encodes slashes as dashes; leading slash is also a dash.
-        // e.g. "-Users-jifarris-Projects-pits" → "/Users/jifarris/Projects/pits"
-        return dir.replacingOccurrences(of: "-", with: "/")
+        // "-Users-jifarris-Projects-pits" → "/Users/jifarris/Projects/pits" → "pits"
+        let fullPath = dir.replacingOccurrences(of: "-", with: "/")
+        return URL(fileURLWithPath: fullPath).lastPathComponent
     }
 }

@@ -39,18 +39,20 @@ struct ConversationRowView: View {
                 if let title = conversation.title {
                     Text(title)
                         .font(.system(.body, design: .default))
+                        .fontWeight(.semibold)
                         .lineLimit(1)
                         .truncationMode(.tail)
                     Text(conversation.projectName)
                         .font(.system(.caption2, design: .default))
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
-                        .truncationMode(.head)
+                        .truncationMode(.tail)
                 } else {
                     Text(conversation.projectName)
                         .font(.system(.body, design: .default))
+                        .fontWeight(.semibold)
                         .lineLimit(1)
-                        .truncationMode(.head)
+                        .truncationMode(.tail)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)

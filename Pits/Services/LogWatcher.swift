@@ -19,6 +19,12 @@ final class LogWatcher {
     /// calling `rescan()` or `backfill()` from within `onLines` will deadlock.
     var onLines: ((URL, [String]) -> Void)?
 
+    /// Invoked at the end of every `backfill()`/`rescan()` pass, *after* all
+    /// `onLines` callbacks for that pass have fired. Useful for consumers that
+    /// want to defer an expensive synthesis step (e.g. snapshot rebuild) until
+    /// a whole batch of files has been ingested.
+    var onRescanComplete: (() -> Void)?
+
     init(rootDirectory: URL) {
         self.rootDirectory = rootDirectory
     }
@@ -100,6 +106,7 @@ final class LogWatcher {
         for url in files {
             readNewBytes(from: url)
         }
+        onRescanComplete?()
     }
 
     private func discoverFiles() -> [URL] {
