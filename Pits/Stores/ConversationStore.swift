@@ -2,8 +2,6 @@ import Foundation
 import SwiftUI
 import Combine
 
-/// Single source of truth for the UI. Owns the LogParser, the LogWatcher,
-/// and the derived `[Conversation]` snapshot.
 @MainActor
 final class ConversationStore: ObservableObject {
     @Published private(set) var conversations: [Conversation] = []
@@ -11,40 +9,52 @@ final class ConversationStore: ObservableObject {
         didSet { rebuildSnapshot() }
     }
 
-    /// Called once per newly appended assistant turn (used by SoundManager for chimes).
     var onNewTurn: ((Turn) -> Void)?
 
     private let rootDirectory: URL
     private let parser = LogParser()
     private let watcher: LogWatcher
-    /// Maps sessionId → the JSONL URL that backs it (first seen wins).
+    private let cacheTimer = CacheTimer()
+    private let sound: SoundManager
     private var fileBySession: [String: URL] = [:]
+    private var tickTimer: Timer?
+    /// Turns with a timestamp strictly greater than this chime.
+    /// Before `start()` is called, it is `.distantFuture` so ingested lines
+    /// in tests never chime. `start()` sets it to the real launch time.
+    private var chimeCutoff: Date = .distantFuture
 
-    init(rootDirectory: URL, ttlSeconds: TimeInterval) {
+    init(
+        rootDirectory: URL,
+        ttlSeconds: TimeInterval,
+        sound: SoundManager = SoundManager()
+    ) {
         self.rootDirectory = rootDirectory
         self.ttlSeconds = ttlSeconds
+        self.sound = sound
         self.watcher = LogWatcher(rootDirectory: rootDirectory)
         self.watcher.onLine = { [weak self] url, line in
-            DispatchQueue.main.async {
-                self?.handleLine(url: url, line: line)
-            }
+            DispatchQueue.main.async { self?.handleLine(url: url, line: line) }
         }
         self.parser.onSessionUpdated = { [weak self] _ in
-            // Coalesce via runloop — rebuildSnapshot() already does full resort.
             DispatchQueue.main.async { self?.rebuildSnapshot() }
         }
     }
 
     func start() {
+        // Anything with a timestamp after this moment is "new" — anything
+        // loaded during backfill is historical and does not chime.
+        chimeCutoff = Date()
         watcher.backfill()
         watcher.start()
+        startTimer()
     }
 
     func stop() {
         watcher.stop()
+        tickTimer?.invalidate()
+        tickTimer = nil
     }
 
-    /// Force a snapshot rebuild (used by the 1 Hz timer and when TTL changes).
     func rebuildSnapshot() {
         var result: [Conversation] = []
         for sid in parser.sessionIds() {
@@ -52,11 +62,8 @@ final class ConversationStore: ObservableObject {
             let url = fileBySession[sid] ?? URL(fileURLWithPath: "/dev/null")
             let projectName = Conversation.projectName(from: url)
             result.append(Conversation(
-                id: sid,
-                projectName: projectName,
-                filePath: url,
-                turns: turns,
-                ttlSeconds: ttlSeconds
+                id: sid, projectName: projectName, filePath: url,
+                turns: turns, ttlSeconds: ttlSeconds
             ))
         }
         result.sort { $0.lastActivityTimestamp > $1.lastActivityTimestamp }
@@ -65,7 +72,6 @@ final class ConversationStore: ObservableObject {
 
     // MARK: - Testing hook
 
-    /// Lets tests feed a line directly without touching the watcher.
     func ingestForTesting(url: URL, line: String) {
         handleLine(url: url, line: line)
     }
@@ -73,21 +79,44 @@ final class ConversationStore: ObservableObject {
     // MARK: - Private
 
     private func handleLine(url: URL, line: String) {
-        // Capture which file a session lives in (first line wins).
         if let entry = JSONLDecoder.decode(line: line) {
             let sid: String
             switch entry {
             case .turn(let t): sid = t.sessionId
             case .human(let h): sid = h.sessionId
             }
-            if fileBySession[sid] == nil {
-                fileBySession[sid] = url
-            }
-            if case .turn(let t) = entry {
+            if fileBySession[sid] == nil { fileBySession[sid] = url }
+            if case .turn(let t) = entry, t.timestamp > chimeCutoff {
+                sound.playMessageReceived()
                 onNewTurn?(t)
             }
         }
         parser.ingest(line: line)
         rebuildSnapshot()
+    }
+
+    private func startTimer() {
+        let t = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.tick() }
+        }
+        RunLoop.main.add(t, forMode: .common)
+        tickTimer = t
+    }
+
+    private func tick() {
+        let events = cacheTimer.tick(conversations: conversations, at: Date())
+        for e in events {
+            switch e {
+            case .oneMinuteWarning:
+                sound.playOneMinuteWarning()
+            case .transitionedToCold:
+                // Derived values recompute on the next UI tick via
+                // TimelineView — no snapshot rebuild required.
+                break
+            }
+        }
+        // Force a publish so SwiftUI pulls the latest `conversations` snapshot
+        // and any subscribers (like TimelineView consumers) reflect new state.
+        objectWillChange.send()
     }
 }
