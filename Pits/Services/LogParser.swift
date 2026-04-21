@@ -11,6 +11,14 @@ final class LogParser {
     /// Called whenever a session's turn list changes. sessionId passed in.
     var onSessionUpdated: ((String) -> Void)?
 
+    init(seed: PersistedParser? = nil) {
+        if let seed {
+            self.turnsByRequestId = seed.turnsByRequestId
+            self.humanTurnsBySession = seed.humanTurnsBySession
+            self.titleBySession = seed.titleBySession
+        }
+    }
+
     func ingest(line: String) {
         guard let entry = JSONLDecoder.decode(line: line) else { return }
         switch entry {
@@ -61,5 +69,15 @@ final class LogParser {
         var ids = Set(turnsByRequestId.values.map(\.sessionId))
         for sid in humanTurnsBySession.keys { ids.insert(sid) }
         return ids
+    }
+
+    /// Snapshot of internal state for persistence. Safe to call from the same
+    /// queue that owns the parser.
+    func snapshot() -> PersistedParser {
+        PersistedParser(
+            turnsByRequestId: turnsByRequestId,
+            humanTurnsBySession: humanTurnsBySession,
+            titleBySession: titleBySession
+        )
     }
 }
