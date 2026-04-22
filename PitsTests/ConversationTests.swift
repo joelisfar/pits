@@ -128,4 +128,81 @@ final class ConversationTests: XCTestCase {
         let now = Date(timeIntervalSince1970: 1500)  // cold (TTL 300, elapsed 500)
         XCTAssertEqual(c.estimatedNextTurnCost(at: now), 9.0625, accuracy: 0.0001)
     }
+
+    // MARK: - filtered(toMonth:)
+
+    private func la_cal() -> Calendar {
+        var c = Calendar(identifier: .gregorian)
+        c.timeZone = TimeZone(identifier: "America/Los_Angeles")!
+        return c
+    }
+
+    private func turnAt(year: Int, month: Int, day: Int,
+                        requestId: String = UUID().uuidString,
+                        isSubagent: Bool = false) -> Turn {
+        let ts = la_cal().date(from: DateComponents(year: year, month: month, day: day, hour: 12))!
+        return Turn(
+            requestId: requestId, sessionId: "s",
+            timestamp: ts, model: "claude-opus-4-6",
+            inputTokens: 1_000_000, cacheCreationTokens: 0,
+            cacheReadTokens: 0, outputTokens: 0,
+            stopReason: "end_turn", isSubagent: isSubagent
+        )
+    }
+
+    func test_filteredToMonth_dropsTurnsOutsideMonth() {
+        let c = Conversation(
+            id: "s", projectName: "p",
+            filePath: URL(fileURLWithPath: "/tmp/x.jsonl"),
+            turns: [
+                turnAt(year: 2026, month: 3, day: 28),
+                turnAt(year: 2026, month: 4, day: 2),
+                turnAt(year: 2026, month: 4, day: 19),
+            ],
+            ttlSeconds: 300
+        )
+        let filtered = c.filtered(toMonth: MonthScope(year: 2026, month: 4), in: la_cal())
+        XCTAssertEqual(filtered?.turns.count, 2)
+        XCTAssertEqual(filtered?.totalCost ?? 0, 10.00, accuracy: 0.0001)
+    }
+
+    func test_filteredToMonth_returnsNilWhenNoTurnsOrHumansInMonth() {
+        let c = Conversation(
+            id: "s", projectName: "p",
+            filePath: URL(fileURLWithPath: "/tmp/x.jsonl"),
+            turns: [turnAt(year: 2026, month: 3, day: 28)],
+            ttlSeconds: 300
+        )
+        XCTAssertNil(c.filtered(toMonth: MonthScope(year: 2026, month: 4), in: la_cal()))
+    }
+
+    func test_filteredToMonth_subagentTurnsRespectFilter() {
+        let c = Conversation(
+            id: "s", projectName: "p",
+            filePath: URL(fileURLWithPath: "/tmp/x.jsonl"),
+            turns: [
+                turnAt(year: 2026, month: 4, day: 5, isSubagent: true),
+                turnAt(year: 2026, month: 3, day: 28, isSubagent: true),
+                turnAt(year: 2026, month: 4, day: 6, isSubagent: false),
+            ],
+            ttlSeconds: 300
+        )
+        let f = c.filtered(toMonth: MonthScope(year: 2026, month: 4), in: la_cal())!
+        XCTAssertEqual(f.subagentTurns.count, 1)
+        XCTAssertEqual(f.ownTurns.count, 1)
+    }
+
+    func test_filteredToMonth_preservesIdentityFields() {
+        let c = Conversation(
+            id: "abc", projectName: "demo", title: "My title",
+            filePath: URL(fileURLWithPath: "/tmp/x.jsonl"),
+            turns: [turnAt(year: 2026, month: 4, day: 5)],
+            ttlSeconds: 300
+        )
+        let f = c.filtered(toMonth: MonthScope(year: 2026, month: 4), in: la_cal())!
+        XCTAssertEqual(f.id, "abc")
+        XCTAssertEqual(f.projectName, "demo")
+        XCTAssertEqual(f.title, "My title")
+        XCTAssertEqual(f.ttlSeconds, 300)
+    }
 }

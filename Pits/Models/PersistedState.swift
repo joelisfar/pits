@@ -7,8 +7,6 @@ struct PersistedState: Codable, Equatable {
     /// Bumped when the on-disk shape changes. Mismatch → discard cache.
     let schemaVersion: Int
     let savedAt: Date
-    /// The user's loaded window at save time (1 = today only, 7 = today + 6).
-    let daysLoaded: Int
     /// sessionId → originating JSONL file URL.
     let fileBySession: [String: URL]
     /// File URL → byte offset where the next read should start. Always points

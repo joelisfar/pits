@@ -81,7 +81,6 @@ final class PersistedStateTests: XCTestCase {
         let state = PersistedState(
             schemaVersion: 1,
             savedAt: Date(timeIntervalSince1970: 1_700_000_000),
-            daysLoaded: 7,
             fileBySession: ["s1": url],
             offsets: [url: 1234],
             parser: PersistedParser(

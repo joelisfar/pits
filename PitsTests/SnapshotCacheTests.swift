@@ -29,7 +29,6 @@ final class SnapshotCacheTests: XCTestCase {
         return PersistedState(
             schemaVersion: version,
             savedAt: Date(timeIntervalSince1970: 1_700_000_500),
-            daysLoaded: 7,
             fileBySession: ["s1": url],
             offsets: [url: 100],
             parser: PersistedParser(
@@ -87,17 +86,17 @@ final class SnapshotCacheTests: XCTestCase {
         let s1 = sampleState()
         cache.scheduleSave(s1)
         // Immediately call saveNow with a different state.
+        let s2SavedAt = Date(timeIntervalSince1970: 1_900_000_000)  // distinct from s1
         let s2 = PersistedState(
             schemaVersion: s1.schemaVersion,
-            savedAt: s1.savedAt,
-            daysLoaded: 14,  // changed
+            savedAt: s2SavedAt,
             fileBySession: s1.fileBySession,
             offsets: s1.offsets,
             parser: s1.parser
         )
         try cache.saveNow(s2)
 
-        XCTAssertEqual(cache.load()?.daysLoaded, 14)
+        XCTAssertEqual(cache.load()?.savedAt, s2SavedAt)
 
         // Wait past a sane window — the cancelled scheduleSave must NOT
         // overwrite the saveNow value with s1.
@@ -105,6 +104,6 @@ final class SnapshotCacheTests: XCTestCase {
         DispatchQueue.global().asyncAfter(deadline: .now() + 0.3) { exp.fulfill() }
         wait(for: [exp], timeout: 1.0)
 
-        XCTAssertEqual(cache.load()?.daysLoaded, 14)
+        XCTAssertEqual(cache.load()?.savedAt, s2SavedAt)
     }
 }
