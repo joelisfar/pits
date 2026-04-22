@@ -85,17 +85,19 @@ struct ConversationRowView: View {
             VStack(alignment: .trailing, spacing: 2) {
                 Text(formatCost(conversation.totalCost))
                     .font(.system(.body, design: .monospaced))
-                Text("next ~\(formatCost(conversation.estimatedNextTurnCost(at: now)))")
+                Text("next turn ~\(formatCost(conversation.estimatedNextTurnCost(at: now)))")
                     .font(.system(.caption2, design: .monospaced))
                     .foregroundStyle(.secondary)
             }
 
             VStack(alignment: .trailing, spacing: 2) {
-                if status == .warm {
-                    Text(remainingText)
-                        .font(.system(.body, design: .monospaced))
-                        .foregroundStyle(accent)
-                }
+                // Always render the countdown line — opacity 0 when cold —
+                // so cold rows match warm row heights and the list doesn't
+                // reflow as sessions transition warm → cold.
+                Text(status == .warm ? remainingText : " ")
+                    .font(.system(.body, design: .monospaced))
+                    .foregroundStyle(accent)
+                    .opacity(status == .warm ? 1 : 0)
                 Text(status == .warm ? "warm" : "cold")
                     .font(.system(.caption2, design: .monospaced))
                     .foregroundStyle(.secondary)
