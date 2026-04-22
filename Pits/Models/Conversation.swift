@@ -10,6 +10,10 @@ struct Conversation: Identifiable, Equatable {
     let projectName: String
     /// AI-generated session title, if Claude Code has written one yet.
     let title: String?
+    /// Displayable preview of the first user message. Used as a row-title
+    /// fallback when `title` is nil (Claude Code skips title generation for
+    /// sessions that open with a slash command).
+    let firstMessageText: String?
     /// JSONL file backing this session.
     let filePath: URL
     /// All retained turns, in chronological order.
@@ -25,6 +29,7 @@ struct Conversation: Identifiable, Equatable {
         id: String,
         projectName: String,
         title: String? = nil,
+        firstMessageText: String? = nil,
         filePath: URL,
         turns: [Turn],
         humanTurns: [HumanTurn] = [],
@@ -33,6 +38,7 @@ struct Conversation: Identifiable, Equatable {
         self.id = id
         self.projectName = projectName
         self.title = title
+        self.firstMessageText = firstMessageText
         self.filePath = filePath
         self.turns = turns
         self.humanTurns = humanTurns
@@ -133,6 +139,7 @@ struct Conversation: Identifiable, Equatable {
             id: id,
             projectName: projectName,
             title: title,
+            firstMessageText: firstMessageText,
             filePath: filePath,
             turns: keptTurns,
             humanTurns: keptHumans,

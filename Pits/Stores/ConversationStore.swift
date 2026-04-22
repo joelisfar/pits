@@ -177,7 +177,9 @@ final class ConversationStore: ObservableObject {
             let url = fileBySession[sid] ?? URL(fileURLWithPath: "/dev/null")
             let projectName = Conversation.projectName(from: url)
             result.append(Conversation(
-                id: sid, projectName: projectName, title: parser.title(sessionId: sid),
+                id: sid, projectName: projectName,
+                title: parser.title(sessionId: sid),
+                firstMessageText: parser.firstMessageText(sessionId: sid),
                 filePath: url, turns: turns, humanTurns: humans, ttlSeconds: ttlSeconds
             ))
         }
