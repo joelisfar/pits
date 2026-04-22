@@ -1,6 +1,6 @@
 import Foundation
 
-enum CacheStatus { case warm, cold }
+enum CacheStatus { case new, warm, cold }
 
 /// A single Claude Code conversation aggregated from one JSONL file.
 struct Conversation: Identifiable, Equatable {
@@ -18,8 +18,6 @@ struct Conversation: Identifiable, Equatable {
     let filePath: URL
     /// All retained turns, in chronological order.
     let turns: [Turn]
-    /// Cache TTL in seconds (configurable via settings).
-    let ttlSeconds: TimeInterval
     /// User messages in this session, chronological. The cache TTL resets
     /// when a message is *sent*, not only when Claude replies, so these
     /// timestamps drive the warm-countdown alongside assistant turns.
@@ -32,8 +30,7 @@ struct Conversation: Identifiable, Equatable {
         firstMessageText: String? = nil,
         filePath: URL,
         turns: [Turn],
-        humanTurns: [HumanTurn] = [],
-        ttlSeconds: TimeInterval
+        humanTurns: [HumanTurn] = []
     ) {
         self.id = id
         self.projectName = projectName
@@ -42,7 +39,6 @@ struct Conversation: Identifiable, Equatable {
         self.filePath = filePath
         self.turns = turns
         self.humanTurns = humanTurns
-        self.ttlSeconds = ttlSeconds
     }
 
     // MARK: - Derived
@@ -90,38 +86,49 @@ struct Conversation: Identifiable, Equatable {
         lastTurnTimestamp ?? .distantPast
     }
 
+    /// TTL of the most recent assistant turn that wrote to the cache
+    /// (`.ephemeral_5m_input_tokens` → 300s, `.ephemeral_1h_input_tokens` → 3600s).
+    /// Walks turns newest-first to tolerate occasional no-cache turns without
+    /// losing the established TTL. Nil only when no turn in the session has
+    /// ever written to the cache — represented as `.new` in `cacheStatus`.
+    var observedTTLSeconds: TimeInterval? {
+        for t in turns.reversed() {
+            if t.cacheCreation1hTokens > 0 { return 3600 }
+            if t.cacheCreation5mTokens > 0 { return 300 }
+        }
+        return nil
+    }
+
     func cacheTTLRemaining(at now: Date) -> TimeInterval {
-        guard let last = lastTurnTimestamp else { return 0 }
-        let elapsed = now.timeIntervalSince(last)
-        return max(0, ttlSeconds - elapsed)
+        guard let ttl = observedTTLSeconds, let last = lastTurnTimestamp else { return 0 }
+        return max(0, ttl - now.timeIntervalSince(last))
     }
 
     func cacheStatus(at now: Date) -> CacheStatus {
-        cacheTTLRemaining(at: now) > 0 ? .warm : .cold
+        guard observedTTLSeconds != nil else { return .new }
+        return cacheTTLRemaining(at: now) > 0 ? .warm : .cold
     }
 
     /// Estimated cost of the next turn's input bill.
     /// Warm: context size × cache_read rate (cache is reused).
-    /// Cold: context size × cache-write rate, weighted by the last turn's
-    ///       5m/1h split. Falls back to the 5m rate when the last turn had
-    ///       no cache_creation tokens (no signal for the mix).
+    /// Cold: context size × cache-write rate. Observed data shows every
+    ///       cache-writing turn is pure 5m or pure 1h (0 mixed turns across
+    ///       29k samples), so we pick the rate from whichever slot the last
+    ///       turn used rather than blending.
+    /// New:  no cache has been written yet; estimate with the conservative
+    ///       5m write rate.
     func estimatedNextTurnCost(at now: Date) -> Double {
-        guard let last = turns.max(by: { $0.timestamp < $1.timestamp }) else { return 0 }
+        guard let last = turns.last else { return 0 }
         guard let rates = Pricing.rates(for: last.model) else { return 0 }
         let context = Double(last.contextSize)
         switch cacheStatus(at: now) {
         case .warm:
             return context * rates.cacheRead / 1_000_000.0
         case .cold:
-            let total = last.cacheCreation5mTokens + last.cacheCreation1hTokens
-            let writeRate: Double
-            if total > 0 {
-                let frac1h = Double(last.cacheCreation1hTokens) / Double(total)
-                writeRate = rates.cacheWrite5m * (1.0 - frac1h) + rates.cacheWrite1h * frac1h
-            } else {
-                writeRate = rates.cacheWrite5m
-            }
+            let writeRate = last.cacheCreation1hTokens > 0 ? rates.cacheWrite1h : rates.cacheWrite5m
             return context * writeRate / 1_000_000.0
+        case .new:
+            return context * rates.cacheWrite5m / 1_000_000.0
         }
     }
 
@@ -142,8 +149,7 @@ struct Conversation: Identifiable, Equatable {
             firstMessageText: firstMessageText,
             filePath: filePath,
             turns: keptTurns,
-            humanTurns: keptHumans,
-            ttlSeconds: ttlSeconds
+            humanTurns: keptHumans
         )
     }
 

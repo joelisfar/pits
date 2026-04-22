@@ -34,10 +34,11 @@ final class CacheTimer {
 
             if var prev = states[c.id] {
                 // If there's a newer response than we last knew about, the cache
-                // has been refreshed — reset warning & transition state.
+                // has been refreshed — reset the one-minute warning so it can
+                // fire again. `prev.status` is overwritten below with the
+                // freshly-computed status; we don't pretend it was `.warm`.
                 if let prevLast = prev.lastResponse, let newLast = last, newLast > prevLast {
                     prev.warnedOneMinute = false
-                    prev.status = .warm
                 }
                 // Transition warm → cold fires once.
                 if prev.status == .warm && status == .cold {

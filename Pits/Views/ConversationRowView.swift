@@ -19,6 +19,7 @@ struct ConversationRowView: View {
         switch status {
         case .warm: return remaining <= 60 ? .red : .orange
         case .cold: return .secondary
+        case .new: return .secondary
         }
     }
 
@@ -39,6 +40,14 @@ struct ConversationRowView: View {
     private var rowOpacity: Double {
         if !isOpen { return 0.45 }
         return status == .cold ? 0.65 : 1.0
+    }
+
+    private var statusLabel: String {
+        switch status {
+        case .warm: return "warm"
+        case .cold: return "cold"
+        case .new: return "new"
+        }
     }
 
     private var remainingText: String {
@@ -123,7 +132,7 @@ struct ConversationRowView: View {
                     .font(.system(.body, design: .monospaced))
                     .foregroundStyle(accent)
                     .opacity(showCountdown ? 1 : 0)
-                Text(status == .warm ? "warm" : "cold")
+                Text(statusLabel)
                     .font(.system(.caption2, design: .monospaced))
                     .foregroundStyle(.secondary)
             }
@@ -147,7 +156,7 @@ struct ConversationRowView: View {
         id: "s", projectName: "/Users/j/Projects/demo",
         title: "Wire session titles into the row view",
         filePath: URL(fileURLWithPath: "/tmp/x.jsonl"),
-        turns: [turn], ttlSeconds: 300
+        turns: [turn]
     )
     return ConversationRowView(conversation: c, now: Date(), isExpanded: .constant(false))
         .padding()

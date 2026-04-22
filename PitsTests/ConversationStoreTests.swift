@@ -4,7 +4,6 @@ import XCTest
 @MainActor
 final class ConversationStoreTests: XCTestCase {
     private func makeStore(
-        ttl: TimeInterval = 300,
         openSessionsWatcher: OpenSessionsWatcher = OpenSessionsWatcher(
             sessionsDirectory: URL(fileURLWithPath: "/nonexistent/sessions")
         )
@@ -13,7 +12,6 @@ final class ConversationStoreTests: XCTestCase {
         let silentSound = SoundManager(defaults: silentDefaults, player: { _ in })
         return ConversationStore(
             rootDirectory: URL(fileURLWithPath: "/nonexistent"),
-            ttlSeconds: ttl,
             sound: silentSound,
             openSessionsWatcher: openSessionsWatcher
         )
@@ -62,18 +60,6 @@ final class ConversationStoreTests: XCTestCase {
         store.ingestForTesting(url: urlB, line: #"{"type":"assistant","sessionId":"sb","requestId":"r2","timestamp":"2026-04-21T11:00:00.000Z","message":{"model":"claude-opus-4-6","usage":{"input_tokens":1,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":1}}}"#)
 
         XCTAssertEqual(store.conversations.map(\.id), ["sb", "sa"])
-    }
-
-    func test_updatesWhenTTLChanges() {
-        let store = makeStore()
-        store.ingestForTesting(
-            url: URL(fileURLWithPath: "/tmp/-a/a.jsonl"),
-            line: #"{"type":"assistant","sessionId":"s","requestId":"r","timestamp":"2026-04-21T10:00:00.000Z","message":{"model":"claude-opus-4-6","usage":{"input_tokens":1,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":1}}}"#
-        )
-        XCTAssertEqual(store.conversations.first?.ttlSeconds, 300)
-
-        store.ttlSeconds = 600
-        XCTAssertEqual(store.conversations.first?.ttlSeconds, 600)
     }
 
     func test_batchIngest_producesCorrectState() {
@@ -154,7 +140,6 @@ final class ConversationStoreTests: XCTestCase {
         let silentSound = SoundManager(defaults: silentDefaults, player: { _ in })
         let store = ConversationStore(
             rootDirectory: tmp,
-            ttlSeconds: 300,
             sound: silentSound
         )
         store.discoverActiveMonths()

@@ -20,9 +20,6 @@ final class ConversationStore: ObservableObject {
     /// `openSessionsWatcher`. Used to suppress user-facing warnings for
     /// closed conversations and to drive the row's open/closed indicator.
     @Published private(set) var openSessionIds: Set<String> = []
-    @Published var ttlSeconds: TimeInterval {
-        didSet { rebuildSnapshot() }
-    }
 
     var onNewTurn: ((Turn) -> Void)?
 
@@ -42,13 +39,11 @@ final class ConversationStore: ObservableObject {
 
     init(
         rootDirectory: URL,
-        ttlSeconds: TimeInterval,
         sound: SoundManager = SoundManager(),
         cache: SnapshotCache? = nil,
         openSessionsWatcher: OpenSessionsWatcher = OpenSessionsWatcher()
     ) {
         self.rootDirectory = rootDirectory
-        self.ttlSeconds = ttlSeconds
         self.sound = sound
         self.cache = cache
         self.openSessionsWatcher = openSessionsWatcher
@@ -216,7 +211,7 @@ final class ConversationStore: ObservableObject {
                 id: sid, projectName: projectName,
                 title: parser.title(sessionId: sid),
                 firstMessageText: parser.firstMessageText(sessionId: sid),
-                filePath: url, turns: turns, humanTurns: humans, ttlSeconds: ttlSeconds
+                filePath: url, turns: turns, humanTurns: humans
             ))
         }
         result.sort { $0.lastActivityTimestamp > $1.lastActivityTimestamp }

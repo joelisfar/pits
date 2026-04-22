@@ -22,7 +22,6 @@ final class ConversationStoreCacheTests: XCTestCase {
         let silentSound = SoundManager(defaults: silentDefaults, player: { _ in })
         return ConversationStore(
             rootDirectory: root ?? URL(fileURLWithPath: "/nonexistent"),
-            ttlSeconds: 300,
             sound: silentSound,
             cache: cache
         )

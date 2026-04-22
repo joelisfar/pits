@@ -79,7 +79,6 @@ struct PitsApp: App {
     @AppStorage(SoundManager.soundsEnabledKey) private var soundsEnabled: Bool = true
 
     init() {
-        let ttl = UserDefaults.standard.object(forKey: "net.farriswheel.Pits.ttlSeconds") as? Double ?? 300
         let root = URL(fileURLWithPath: NSString(string: "~/.claude/projects").expandingTildeInPath)
         let cacheURL = FileManager.default
             .urls(for: .cachesDirectory, in: .userDomainMask)
@@ -94,7 +93,7 @@ struct PitsApp: App {
             Pricing.overlay(snap.rates)
         }
 
-        let s = ConversationStore(rootDirectory: root, ttlSeconds: ttl, cache: cache)
+        let s = ConversationStore(rootDirectory: root, cache: cache)
         _store = StateObject(wrappedValue: s)
 
         // Hand the store to the menu bar router before the AppDelegate's
@@ -153,7 +152,7 @@ struct PitsApp: App {
         .windowStyle(.hiddenTitleBar)
 
         Settings {
-            SettingsView(store: store)
+            SettingsView()
         }
     }
 }
