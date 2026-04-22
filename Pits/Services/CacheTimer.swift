@@ -17,7 +17,12 @@ final class CacheTimer {
     private var states: [String: Snapshot] = [:]
 
     /// Advance all tracked conversations to `now`. Returns events to act on.
-    func tick(conversations: [Conversation], at now: Date) -> [CacheTimerEvent] {
+    ///
+    /// `openSessionIds` gates user-facing warnings: sessions whose id is not in
+    /// the set are treated as closed tabs and do not emit `oneMinuteWarning`
+    /// events (there's no user to warn). Internal state still tracks warm/cold
+    /// transitions so that a subsequent reopen-within-window can fire normally.
+    func tick(conversations: [Conversation], at now: Date, openSessionIds: Set<String>) -> [CacheTimerEvent] {
         var events: [CacheTimerEvent] = []
         var seen = Set<String>()
 
@@ -38,8 +43,12 @@ final class CacheTimer {
                 if prev.status == .warm && status == .cold {
                     events.append(.transitionedToCold(c.id))
                 }
-                // One-minute warning fires once per warm period.
-                if status == .warm, remaining <= 60, !prev.warnedOneMinute {
+                // One-minute warning fires once per warm period, and only for
+                // sessions the user currently has open. A closed session stays
+                // with `warnedOneMinute = false` so reopening mid-window still
+                // fires exactly once.
+                if status == .warm, remaining <= 60, !prev.warnedOneMinute,
+                   openSessionIds.contains(c.id) {
                     events.append(.oneMinuteWarning(c.id))
                     prev.warnedOneMinute = true
                 }

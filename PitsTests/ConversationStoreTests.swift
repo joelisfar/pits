@@ -3,14 +3,43 @@ import XCTest
 
 @MainActor
 final class ConversationStoreTests: XCTestCase {
-    private func makeStore(ttl: TimeInterval = 300) -> ConversationStore {
+    private func makeStore(
+        ttl: TimeInterval = 300,
+        openSessionsWatcher: OpenSessionsWatcher = OpenSessionsWatcher(
+            sessionsDirectory: URL(fileURLWithPath: "/nonexistent/sessions")
+        )
+    ) -> ConversationStore {
         let silentDefaults = UserDefaults(suiteName: "net.farriswheel.Pits.test-\(UUID().uuidString)")!
         let silentSound = SoundManager(defaults: silentDefaults, player: { _ in })
         return ConversationStore(
             rootDirectory: URL(fileURLWithPath: "/nonexistent"),
             ttlSeconds: ttl,
-            sound: silentSound
+            sound: silentSound,
+            openSessionsWatcher: openSessionsWatcher
         )
+    }
+
+    // MARK: - Open sessions wiring
+
+    func test_refreshOpenSessionIds_reflectsWatcherDirectoryContents() throws {
+        let sessionsDir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("pits-store-open-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: sessionsDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: sessionsDir) }
+
+        let liveFile = sessionsDir.appendingPathComponent("1234.json")
+        try #"{"pid":1234,"sessionId":"open-abc"}"#.data(using: .utf8)!
+            .write(to: liveFile)
+
+        let store = makeStore(
+            openSessionsWatcher: OpenSessionsWatcher(sessionsDirectory: sessionsDir)
+        )
+        store.refreshOpenSessionIds()
+        XCTAssertEqual(store.openSessionIds, ["open-abc"])
+
+        try FileManager.default.removeItem(at: liveFile)
+        store.refreshOpenSessionIds()
+        XCTAssertEqual(store.openSessionIds, [])
     }
 
     func test_ingestLine_producesConversation() {
