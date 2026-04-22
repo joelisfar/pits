@@ -4,7 +4,6 @@ import XCTest
 @MainActor
 final class ConversationStoreTests: XCTestCase {
     private func makeStore(
-        ttl: TimeInterval = 300,
         openSessionsWatcher: OpenSessionsWatcher = OpenSessionsWatcher(
             sessionsDirectory: URL(fileURLWithPath: "/nonexistent/sessions")
         )
@@ -13,7 +12,6 @@ final class ConversationStoreTests: XCTestCase {
         let silentSound = SoundManager(defaults: silentDefaults, player: { _ in })
         return ConversationStore(
             rootDirectory: URL(fileURLWithPath: "/nonexistent"),
-            ttlSeconds: ttl,
             sound: silentSound,
             openSessionsWatcher: openSessionsWatcher
         )
@@ -142,7 +140,6 @@ final class ConversationStoreTests: XCTestCase {
         let silentSound = SoundManager(defaults: silentDefaults, player: { _ in })
         let store = ConversationStore(
             rootDirectory: tmp,
-            ttlSeconds: 300,
             sound: silentSound
         )
         store.discoverActiveMonths()
