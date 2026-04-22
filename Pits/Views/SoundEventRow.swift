@@ -33,6 +33,7 @@ struct SoundEventRow: View {
             Spacer()
             Picker("", selection: previewingSelection) {
                 Text("None").tag("")
+                Divider()
                 ForEach(availableSounds, id: \.self) { name in
                     Text(name).tag(name)
                 }

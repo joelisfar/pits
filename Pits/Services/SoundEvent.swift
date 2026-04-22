@@ -32,7 +32,7 @@ enum SoundEvent: String, CaseIterable {
         case .fifteenSecondsUntilCold:   return ["Sosumi", "Sonumi", "Funk", "Funky"]
         case .oneMinuteUntilCold:        return ["Blow", "Breeze"]
         case .newCold:                   return ["Submarine", "Submerge", "Sonar"]
-        case .coldHumanTurn:             return ["Tink", "Pluck", "Pebble"]
+        case .coldHumanTurn:             return ["Hero", "Tink", "Pluck", "Pebble"]
         }
     }
 }
