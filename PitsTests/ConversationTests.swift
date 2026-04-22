@@ -23,6 +23,30 @@ final class ConversationTests: XCTestCase {
         XCTAssertEqual(Conversation.projectName(from: url), "pits")
     }
 
+    func test_projectName_preservesLiteralDashesWhenDirExists() throws {
+        // Create a real directory whose leaf name contains literal dashes,
+        // then verify the encoded form resolves back to that leaf rather
+        // than the last dash-separated word.
+        let unique = String(Int(Date().timeIntervalSince1970 * 1000))
+        let leafName = "one-two-three-\(unique)"
+        let real = URL(fileURLWithPath: "/tmp").appendingPathComponent(leafName, isDirectory: true)
+        try FileManager.default.createDirectory(at: real, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: real) }
+
+        let encoded = "-" + real.path.replacingOccurrences(of: "/", with: "-")
+        let jsonl = URL(fileURLWithPath: "/anywhere/.claude/projects/\(encoded)/abc.jsonl")
+
+        XCTAssertEqual(Conversation.projectName(from: jsonl), leafName)
+    }
+
+    func test_projectName_fallsBackToNaiveLeafWhenPathMissing() {
+        // A completely fictitious path that can't exist on disk should still
+        // return a sensible leaf (the naive last-segment behavior) rather
+        // than crashing or returning empty.
+        let url = URL(fileURLWithPath: "/x/.claude/projects/-nope-not-a-real-path-xyz/abc.jsonl")
+        XCTAssertEqual(Conversation.projectName(from: url), "xyz")
+    }
+
     func test_totalCost_sumOfTurns() {
         let c = Conversation(
             id: "s",

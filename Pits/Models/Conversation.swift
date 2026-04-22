@@ -152,9 +152,12 @@ struct Conversation: Identifiable, Equatable {
     /// Convert a JSONL file URL like
     /// `~/.claude/projects/-Users-jifarris-Projects-pits/abc.jsonl`
     /// into the project's leaf directory name, e.g. `pits`. Claude Code
-    /// encodes the full project path as a dash-separated directory; we decode
-    /// it back to a real path and keep only the last component so the row
-    /// label stays compact.
+    /// encodes the full project path as a dash-separated directory; the
+    /// encoding is lossy when a directory's own name contains a dash
+    /// (e.g. `one-two-three` is indistinguishable from nested `one/two/three`),
+    /// so we walk the split against the real filesystem to find the actual
+    /// boundary between parent and leaf. Falls back to the naive split when
+    /// nothing on disk matches (project may have been moved or deleted).
     static func projectName(from fileURL: URL) -> String {
         // Subagent files live at: .../projects/-<proj>/<parent-id>/subagents/<child>.jsonl
         // We want the project directory, not the "subagents" leaf or the parent-id dir.
@@ -162,8 +165,30 @@ struct Conversation: Identifiable, Equatable {
         if dir.lastPathComponent == "subagents" {
             dir = dir.deletingLastPathComponent().deletingLastPathComponent()
         }
-        // "-Users-jifarris-Projects-pits" → "/Users/jifarris/Projects/pits" → "pits"
-        let fullPath = dir.lastPathComponent.replacingOccurrences(of: "-", with: "/")
-        return URL(fileURLWithPath: fullPath).lastPathComponent
+        let encoded = dir.lastPathComponent
+        var parts = encoded.split(separator: "-", omittingEmptySubsequences: false).map(String.init)
+        if parts.first == "" { parts.removeFirst() } // drop the leading empty from "-Users..."
+        guard !parts.isEmpty else { return encoded }
+        let naiveLeaf = parts.last!
+
+        let fm = FileManager.default
+        var matchedPath = ""
+        var i = 0
+        while i < parts.count {
+            let candidate = matchedPath + "/" + parts[i]
+            var isDir: ObjCBool = false
+            if fm.fileExists(atPath: candidate, isDirectory: &isDir), isDir.boolValue {
+                matchedPath = candidate
+                i += 1
+            } else if i + 1 < parts.count {
+                // The dash between parts[i] and parts[i+1] was literal, not a
+                // separator — merge and retry at the same index.
+                parts[i] = parts[i] + "-" + parts[i + 1]
+                parts.remove(at: i + 1)
+            } else {
+                return naiveLeaf
+            }
+        }
+        return (matchedPath as NSString).lastPathComponent
     }
 }
