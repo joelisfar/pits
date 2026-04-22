@@ -6,8 +6,8 @@ import Foundation
 /// on the user's macOS install becomes the default).
 enum SoundEvent: String, CaseIterable {
     case agentTurnCompleted
-    case fifteenSecondsUntilCold
     case oneMinuteUntilCold
+    case fifteenSecondsUntilCold
     case newCold
     case coldHumanTurn
 

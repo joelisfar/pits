@@ -17,29 +17,37 @@ struct SoundEventRow: View {
     }
 
     var body: some View {
+        // Custom binding so every Picker selection — including re-selecting
+        // the current value, which `.onChange` would dedupe and miss — plays
+        // a preview, matching macOS System Settings → Sound.
+        let previewingSelection = Binding(
+            get: { selection },
+            set: { newValue in
+                selection = newValue
+                soundManager.preview(soundName: newValue)
+            }
+        )
+
         HStack {
             Text(event.label)
             Spacer()
-            Button {
-                soundManager.preview(soundName: selection)
-            } label: {
-                Image(systemName: "speaker.wave.2")
-            }
-            .buttonStyle(.borderless)
-            .disabled(selection.isEmpty)
-            .help("Preview sound")
-
-            Picker("", selection: $selection) {
+            Picker("", selection: previewingSelection) {
                 Text("None").tag("")
                 ForEach(availableSounds, id: \.self) { name in
                     Text(name).tag(name)
                 }
             }
             .labelsHidden()
-            .frame(width: 140)
-            .onChange(of: selection) { _, newValue in
-                soundManager.preview(soundName: newValue)
+            .fixedSize()
+
+            Button {
+                soundManager.preview(soundName: selection)
+            } label: {
+                Image(systemName: "play.circle")
             }
+            .buttonStyle(.borderless)
+            .disabled(selection.isEmpty)
+            .help("Preview sound")
         }
     }
 }

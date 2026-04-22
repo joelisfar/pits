@@ -13,15 +13,14 @@ struct SettingsView: View {
     var body: some View {
         Form {
             Section("Sounds") {
-                Toggle("Play notification sounds", isOn: $soundsEnabled)
-                if soundsEnabled {
-                    ForEach(SoundEvent.allCases, id: \.self) { event in
-                        SoundEventRow(
-                            event: event,
-                            availableSounds: availableSounds,
-                            soundManager: soundManager
-                        )
-                    }
+                Toggle("Play sound effects", isOn: $soundsEnabled)
+                ForEach(SoundEvent.allCases, id: \.self) { event in
+                    SoundEventRow(
+                        event: event,
+                        availableSounds: availableSounds,
+                        soundManager: soundManager
+                    )
+                    .disabled(!soundsEnabled)
                 }
             }
             Section("Window") {
@@ -47,6 +46,8 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
+        .scrollDisabled(true)
+        .fixedSize(horizontal: false, vertical: true)
         .frame(width: 440)
     }
 }
