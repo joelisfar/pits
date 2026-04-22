@@ -14,6 +14,14 @@ struct PitsApp: App {
             .first!
             .appendingPathComponent("state.json")
         let cache = SnapshotCache(fileURL: cacheURL)
+
+        // Hydrate Pricing.table from the on-disk LiteLLM snapshot before
+        // the store builds its first snapshot, so totals render with
+        // fetched rates on warm launches.
+        if let snap = PricingCache.load(from: PricingCache.defaultURL) {
+            Pricing.overlay(snap.rates)
+        }
+
         let s = ConversationStore(rootDirectory: root, ttlSeconds: ttl, cache: cache)
         _store = StateObject(wrappedValue: s)
 
@@ -25,6 +33,24 @@ struct PitsApp: App {
             queue: .main
         ) { [weak s] _ in
             s?.stop()
+        }
+
+        // Refresh from LiteLLM in the background. If the on-disk snapshot
+        // is older than 24h (or missing), refetch and persist; the new
+        // rates get overlaid and the store rebuilds so visible totals
+        // update without restarting the app.
+        Task.detached(priority: .background) { [weak s] in
+            let cacheURL = PricingCache.defaultURL
+            let cached = PricingCache.load(from: cacheURL)
+            let isStale = cached.map { Date().timeIntervalSince($0.fetchedAt) > 86_400 } ?? true
+            guard isStale else { return }
+            let fetched = await RemotePricing.fetch()
+            guard !fetched.isEmpty else { return }
+            try? PricingCache.save(rates: fetched, fetchedAt: Date(), to: cacheURL)
+            await MainActor.run {
+                Pricing.overlay(fetched)
+                s?.rebuildSnapshot()
+            }
         }
     }
 

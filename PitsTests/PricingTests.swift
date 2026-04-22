@@ -40,11 +40,11 @@ final class PricingTests: XCTestCase {
         // Haiku 4.5 was incorrectly priced at Haiku 3.5 rates.
         let rates = Pricing.rates(for: "claude-haiku-4-5")
         XCTAssertNotNil(rates)
-        XCTAssertEqual(rates?.base, 1.00)
-        XCTAssertEqual(rates?.cacheWrite5m, 1.25)
-        XCTAssertEqual(rates?.cacheWrite1h, 2.00)
-        XCTAssertEqual(rates?.cacheRead, 0.10)
-        XCTAssertEqual(rates?.output, 5.00)
+        XCTAssertEqual(rates?.base ?? 0, 1.00, accuracy: 0.0001)
+        XCTAssertEqual(rates?.cacheWrite5m ?? 0, 1.25, accuracy: 0.0001)
+        XCTAssertEqual(rates?.cacheWrite1h ?? 0, 2.00, accuracy: 0.0001)
+        XCTAssertEqual(rates?.cacheRead ?? 0, 0.10, accuracy: 0.0001)
+        XCTAssertEqual(rates?.output ?? 0, 5.00, accuracy: 0.0001)
     }
 
     func test_rateLookup_haiku35_unchanged() {
@@ -60,5 +60,33 @@ final class PricingTests: XCTestCase {
             XCTAssertEqual(r.cacheWrite5m, r.base * 1.25, accuracy: 0.0001, "5m rate for \(name)")
             XCTAssertEqual(r.cacheRead, r.base * 0.10, accuracy: 0.0001, "read rate for \(name)")
         }
+    }
+
+    func test_overlay_updatesExistingRates() {
+        let snapshot = Pricing.table
+        defer { Pricing.replaceTable(with: snapshot) }
+        let updated = Pricing.Rates(base: 99.0, cacheWrite5m: 99.0, cacheWrite1h: 99.0,
+                                     cacheRead: 99.0, output: 99.0)
+        Pricing.overlay(["claude-opus-4-7": updated])
+        XCTAssertEqual(Pricing.rates(for: "claude-opus-4-7")?.base, 99.0)
+    }
+
+    func test_overlay_addsBrandNewModels() {
+        let snapshot = Pricing.table
+        defer { Pricing.replaceTable(with: snapshot) }
+        let novel = Pricing.Rates(base: 7.0, cacheWrite5m: 8.75, cacheWrite1h: 14.0,
+                                   cacheRead: 0.7, output: 35.0)
+        Pricing.overlay(["claude-opus-5": novel])
+        XCTAssertEqual(Pricing.rates(for: "claude-opus-5")?.base, 7.0)
+    }
+
+    func test_overlay_preservesUnaffectedEntries() {
+        let snapshot = Pricing.table
+        defer { Pricing.replaceTable(with: snapshot) }
+        let updated = Pricing.Rates(base: 99.0, cacheWrite5m: 99.0, cacheWrite1h: 99.0,
+                                     cacheRead: 99.0, output: 99.0)
+        Pricing.overlay(["claude-opus-4-7": updated])
+        XCTAssertEqual(Pricing.rates(for: "claude-haiku-4-5")?.base, 1.0,
+                       "haiku-4-5 should be unchanged")
     }
 }
