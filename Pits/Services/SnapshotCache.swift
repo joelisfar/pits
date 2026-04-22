@@ -10,10 +10,10 @@ final class SnapshotCache {
     private let queue = DispatchQueue(label: "net.farriswheel.Pits.SnapshotCache")
     private var pendingWorkItem: DispatchWorkItem?
 
-    // v2: Turn now stores cache_creation as a 5m/1h split. Old v1 caches
-    // (with the flat cacheCreationTokens field) decode to garbage and are
-    // discarded — the next launch rebuilds from JSONL with correct pricing.
-    static let currentSchemaVersion: Int = 2
+    // v3: removed PersistedState.daysLoaded (month scope replaces the
+    // rolling-day window). Old v2 caches mismatch the version and get
+    // discarded silently; next launch rebuilds from JSONL.
+    static let currentSchemaVersion: Int = 3
     private static let log = OSLog(subsystem: "net.farriswheel.Pits", category: "SnapshotCache")
 
     init(fileURL: URL, debounceInterval: TimeInterval = 2.0) {

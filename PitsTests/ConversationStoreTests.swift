@@ -94,4 +94,51 @@ final class ConversationStoreTests: XCTestCase {
         )
         XCTAssertEqual(store.conversations.count, 1)
     }
+
+    // MARK: - Month scope
+
+    func test_init_defaultsToCurrentMonth() {
+        let store = makeStore()
+        XCTAssertEqual(store.selectedMonth, MonthScope.current())
+    }
+
+    func test_setSelectedMonth_updatesPublishedValue() {
+        let store = makeStore()
+        let target = MonthScope(year: 2026, month: 1)
+        store.setSelectedMonth(target)
+        XCTAssertEqual(store.selectedMonth, target)
+    }
+
+    func test_discoverActiveMonths_returnsContiguousRangeFromEarliestToCurrent() throws {
+        let tmp = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("pits-discover-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tmp) }
+        let project = tmp.appendingPathComponent("-proj")
+        try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
+        let url = project.appendingPathComponent("a.jsonl")
+        try "x".write(to: url, atomically: true, encoding: .utf8)
+        let twoMonthsAgo = Calendar.current.date(byAdding: .month, value: -2, to: Date())!
+        try FileManager.default.setAttributes([.modificationDate: twoMonthsAgo], ofItemAtPath: url.path)
+
+        let silentDefaults = UserDefaults(suiteName: "test-\(UUID().uuidString)")!
+        let silentSound = SoundManager(defaults: silentDefaults, player: { _ in })
+        let store = ConversationStore(
+            rootDirectory: tmp,
+            ttlSeconds: 300,
+            sound: silentSound
+        )
+        store.discoverActiveMonths()
+        XCTAssertEqual(store.availableMonths.first, MonthScope.current())
+        XCTAssertEqual(store.availableMonths.last, MonthScope.from(date: twoMonthsAgo))
+        XCTAssertEqual(store.availableMonths.count, 3)
+    }
+
+    func test_setSelectedMonth_sameValueIsNoop() {
+        let store = makeStore()
+        let m = store.selectedMonth
+        // Should not crash or change state.
+        store.setSelectedMonth(m)
+        XCTAssertEqual(store.selectedMonth, m)
+    }
 }

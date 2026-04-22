@@ -5,16 +5,14 @@ import Combine
 @MainActor
 final class ConversationStore: ObservableObject {
     @Published private(set) var conversations: [Conversation] = []
-    /// True while the initial backfill is still running. UI uses this to show
-    /// a loading state instead of the "no conversations" empty view.
+    /// True while a backfill is running (initial or after a month switch).
     @Published private(set) var isLoading: Bool = false
-    /// How many days back we've loaded (1 = today only). `loadMoreDays()`
-    /// bumps this; the watcher's mtime range is derived from it.
-    @Published private(set) var daysLoaded: Int
-    /// Number of additional one-day chunks still queued for progressive load.
-    /// Drives the chain of loads that runs each day sequentially so the UI
-    /// gets a visible step per day instead of one long wait at the end.
-    @Published private(set) var pendingLoadDays: Int = 0
+    /// The calendar month currently in scope. Drives both watcher mtime
+    /// range and the display-time filter.
+    @Published private(set) var selectedMonth: MonthScope = MonthScope.current()
+    /// Contiguous descending list of months that have at least one JSONL
+    /// in the root directory tree. Computed by `discoverActiveMonths()`.
+    @Published private(set) var availableMonths: [MonthScope] = []
     @Published var ttlSeconds: TimeInterval {
         didSet { rebuildSnapshot() }
     }
@@ -52,7 +50,6 @@ final class ConversationStore: ObservableObject {
         self.parser = LogParser(seed: pruned?.parser)
         self.watcher = LogWatcher(rootDirectory: rootDirectory, initialOffsets: pruned?.offsets ?? [:])
         self.fileBySession = pruned?.fileBySession ?? [:]
-        self.daysLoaded = pruned?.daysLoaded ?? 1
 
         self.watcher.onLines = { [weak self] url, lines in
             DispatchQueue.main.async { self?.handleLines(url: url, lines: lines) }
@@ -64,15 +61,7 @@ final class ConversationStore: ObservableObject {
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.rebuildSnapshot()
-                // If the user requested a multi-day load, queue the next
-                // one-day chunk so each day pops in individually instead of
-                // the whole batch landing at the end.
-                if self.pendingLoadDays > 0 {
-                    self.pendingLoadDays -= 1
-                    self.runOneDayChunk()
-                } else {
-                    self.isLoading = false
-                }
+                self.isLoading = false
             }
         }
 
@@ -107,7 +96,6 @@ final class ConversationStore: ObservableObject {
         return PersistedState(
             schemaVersion: state.schemaVersion,
             savedAt: state.savedAt,
-            daysLoaded: state.daysLoaded,
             fileBySession: files,
             offsets: offs,
             parser: PersistedParser(
@@ -119,50 +107,52 @@ final class ConversationStore: ObservableObject {
     }
 
     func start() {
-        // Anything with a timestamp after this moment is "new" — anything
-        // loaded during backfill is historical and does not chime.
         chimeCutoff = Date()
         isLoading = true
-        // Cold launch (daysLoaded == 1, no cache hit): progressive 6-day
-        // chain. Warm launch: daysLoaded already reflects the user's loaded
-        // window — just reconcile once.
-        pendingLoadDays = (daysLoaded == 1) ? 6 : 0
-        watcher.mtimeRange = Self.cutoffDate(daysBack: daysLoaded)..<Date.distantFuture
-        // Start live watching + the 1 Hz timer on main — both are non-blocking.
+        discoverActiveMonths()
+        watcher.mtimeRange = selectedMonth.dateRange()
         watcher.start()
         startTimer()
         let w = watcher
-        DispatchQueue.global(qos: .userInitiated).async {
-            w.backfill()
-        }
+        DispatchQueue.global(qos: .userInitiated).async { w.backfill() }
     }
 
-    /// Extend the loaded window by `n` days. Loads proceed *one day at a
-    /// time* so the list visibly grows day-by-day instead of beach-balling
-    /// until all `n` days arrive together. Each chunk triggers its own
-    /// `rebuildSnapshot()` via `onRescanComplete`.
-    func loadMoreDays(_ n: Int = 7) {
-        guard n > 0 else { return }
+    /// Switch the active month scope. Backfills any not-yet-loaded files in
+    /// the new month's range; already-ingested data stays in parser state so
+    /// re-selecting a previously-visited month is instant.
+    func setSelectedMonth(_ month: MonthScope) {
+        guard month != selectedMonth else { return }
+        selectedMonth = month
         isLoading = true
-        pendingLoadDays = n - 1
-        runOneDayChunk()
-    }
-
-    /// Extend the mtime window by exactly one more day and kick the watcher.
-    /// Called recursively via `onRescanComplete` while `pendingLoadDays > 0`.
-    private func runOneDayChunk() {
-        daysLoaded += 1
-        watcher.mtimeRange = Self.cutoffDate(daysBack: daysLoaded)..<Date.distantFuture
+        watcher.mtimeRange = month.dateRange()
         let w = watcher
-        DispatchQueue.global(qos: .userInitiated).async {
-            w.backfill()
-        }
+        DispatchQueue.global(qos: .userInitiated).async { w.backfill() }
     }
 
-    private static func cutoffDate(daysBack: Int) -> Date {
-        let cal = Calendar.current
-        let startOfToday = cal.startOfDay(for: Date())
-        return cal.date(byAdding: .day, value: -(daysBack - 1), to: startOfToday) ?? startOfToday
+    /// Scans the root directory for JSONL mtimes once and computes the
+    /// contiguous month range from earliest mtime through current month.
+    /// Cheap (one stat per file). Sets `availableMonths` to a descending list.
+    func discoverActiveMonths() {
+        let fm = FileManager.default
+        guard let enumerator = fm.enumerator(
+            at: rootDirectory,
+            includingPropertiesForKeys: [.contentModificationDateKey],
+            options: [.skipsHiddenFiles]
+        ) else {
+            availableMonths = [MonthScope.current()]
+            return
+        }
+        var earliest: Date?
+        for case let url as URL in enumerator where url.pathExtension == "jsonl" {
+            if let mtime = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?
+                .contentModificationDate {
+                if earliest == nil || mtime < earliest! {
+                    earliest = mtime
+                }
+            }
+        }
+        let earliestMonth = earliest.map { MonthScope.from(date: $0) } ?? MonthScope.current()
+        availableMonths = MonthScope.range(from: earliestMonth, through: MonthScope.current())
     }
 
     func stop() {
@@ -200,7 +190,6 @@ final class ConversationStore: ObservableObject {
         PersistedState(
             schemaVersion: SnapshotCache.currentSchemaVersion,
             savedAt: Date(),
-            daysLoaded: daysLoaded,
             fileBySession: fileBySession,
             offsets: watcher.currentOffsetsForPersistence(),
             parser: parser.snapshot()
@@ -231,7 +220,7 @@ final class ConversationStore: ObservableObject {
     /// pass without touching FSEvents or async dispatch.
     func reconcileForTesting() {
         chimeCutoff = Date()
-        watcher.mtimeRange = Self.cutoffDate(daysBack: max(1, daysLoaded))..<Date.distantFuture
+        watcher.mtimeRange = selectedMonth.dateRange()
         watcher.backfill()
         // Drain any onLines blocks the watcher dispatched to main.
         RunLoop.main.run(until: Date().addingTimeInterval(0.05))

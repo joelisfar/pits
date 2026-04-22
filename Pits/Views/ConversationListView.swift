@@ -9,7 +9,10 @@ struct ConversationListView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            if store.conversations.isEmpty {
+            MonthPickerBar(store: store)
+            Divider()
+
+            if visibleConversations.isEmpty {
                 if store.isLoading { loadingState } else { emptyState }
             } else {
                 TimelineView(.periodic(from: .now, by: 1.0)) { context in
@@ -30,8 +33,6 @@ struct ConversationListView: View {
                                     .onTapGesture { selectedIds.removeAll() }
                             }
                         }
-
-                        loadMoreRow
                     }
                     .listStyle(.plain)
                     .onKeyPress(.rightArrow) { expandSelected() }
@@ -95,15 +96,20 @@ struct ConversationListView: View {
         return .handled
     }
 
+    private var visibleConversations: [Conversation] {
+        store.conversations.compactMap { $0.filtered(toMonth: store.selectedMonth) }
+    }
+
     private var statusBarText: String {
+        let visible = visibleConversations
         if selectedIds.isEmpty {
-            let count = store.conversations.count
-            let total = store.conversations.reduce(0.0) { $0 + $1.totalCost }
+            let count = visible.count
+            let total = visible.reduce(0.0) { $0 + $1.totalCost }
             return "\(count) conversation\(count == 1 ? "" : "s") · \(CostFormat.string(from: total)) total"
         }
-        let selected = store.conversations.filter { selectedIds.contains($0.id) }
+        let selected = visible.filter { selectedIds.contains($0.id) }
         let total = selected.reduce(0.0) { $0 + $1.totalCost }
-        return "\(selected.count) of \(store.conversations.count) selected · \(CostFormat.string(from: total)) total"
+        return "\(selected.count) of \(visible.count) selected · \(CostFormat.string(from: total)) total"
     }
 
     /// Apply the "keep window on top" preference to this scene's NSWindow.
@@ -140,40 +146,9 @@ struct ConversationListView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    @ViewBuilder
-    private var loadMoreRow: some View {
-        HStack {
-            // Flanking tappable regions clear the selection when a user
-            // clicks the empty area next to the button.
-            Color.clear
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .contentShape(Rectangle())
-                .onTapGesture { selectedIds.removeAll() }
-            if store.isLoading {
-                ProgressView().controlSize(.small)
-                Text("Loading more…")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            } else {
-                Button("Load 7 more days") {
-                    store.loadMoreDays(7)
-                }
-                .buttonStyle(.bordered)
-                .buttonBorderShape(.capsule)
-                .controlSize(.small)
-            }
-            Color.clear
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .contentShape(Rectangle())
-                .onTapGesture { selectedIds.removeAll() }
-        }
-        .padding(.vertical, 10)
-        .listRowSeparator(.hidden)
-    }
-
     private var dayGroups: [DayGroup] {
         let cal = Calendar.current
-        let grouped = Dictionary(grouping: store.conversations) { c in
+        let grouped = Dictionary(grouping: visibleConversations) { c in
             cal.startOfDay(for: c.lastActivityTimestamp)
         }
         return grouped.map { (day, convos) in
@@ -190,6 +165,32 @@ private struct DayGroup {
     let day: Date
     let conversations: [Conversation]
     var totalCost: Double { conversations.reduce(0.0) { $0 + $1.totalCost } }
+}
+
+private struct MonthPickerBar: View {
+    @ObservedObject var store: ConversationStore
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Menu {
+                ForEach(store.availableMonths, id: \.self) { m in
+                    Button(m.displayName()) { store.setSelectedMonth(m) }
+                }
+            } label: {
+                HStack(spacing: 4) {
+                    Text(store.selectedMonth.displayName())
+                        .font(.caption.weight(.medium))
+                    Image(systemName: "chevron.down")
+                        .font(.caption2)
+                }
+            }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+            Spacer()
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+    }
 }
 
 private struct DayHeader: View {

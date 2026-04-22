@@ -118,7 +118,6 @@ final class ConversationStoreCacheTests: XCTestCase {
         try setupCache.saveNow(PersistedState(
             schemaVersion: SnapshotCache.currentSchemaVersion,
             savedAt: Date(),
-            daysLoaded: 1,
             fileBySession: ["s1": file],
             offsets: [file: UInt64((firstLine + "\n").utf8.count)],
             parser: setupStore.snapshotStateForTesting().parser
