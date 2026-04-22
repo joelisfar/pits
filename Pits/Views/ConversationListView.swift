@@ -177,12 +177,8 @@ private struct MonthPickerBar: View {
                     Button(m.displayName()) { store.setSelectedMonth(m) }
                 }
             } label: {
-                HStack(spacing: 4) {
-                    Text(store.selectedMonth.displayName())
-                        .font(.caption.weight(.medium))
-                    Image(systemName: "chevron.down")
-                        .font(.caption2)
-                }
+                Text(store.selectedMonth.displayName())
+                    .font(.caption.weight(.medium))
             }
             .menuStyle(.borderlessButton)
             .fixedSize()
