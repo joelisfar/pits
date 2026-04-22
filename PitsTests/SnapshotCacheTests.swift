@@ -16,7 +16,7 @@ final class SnapshotCacheTests: XCTestCase {
         try? FileManager.default.removeItem(at: tmpDir)
     }
 
-    fileprivate func sampleState(version: Int = 1) -> PersistedState {
+    fileprivate func sampleState(version: Int = SnapshotCache.currentSchemaVersion) -> PersistedState {
         let url = URL(fileURLWithPath: "/tmp/-proj/abc.jsonl")
         let turn = Turn(
             requestId: "r1", sessionId: "s1",

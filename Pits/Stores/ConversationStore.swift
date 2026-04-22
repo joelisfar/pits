@@ -198,7 +198,7 @@ final class ConversationStore: ObservableObject {
 
     private func snapshotState() -> PersistedState {
         PersistedState(
-            schemaVersion: 1,
+            schemaVersion: SnapshotCache.currentSchemaVersion,
             savedAt: Date(),
             daysLoaded: daysLoaded,
             fileBySession: fileBySession,

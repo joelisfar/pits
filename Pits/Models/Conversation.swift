@@ -96,14 +96,26 @@ struct Conversation: Identifiable, Equatable {
 
     /// Estimated cost of the next turn's input bill.
     /// Warm: context size × cache_read rate (cache is reused).
-    /// Cold: context size × cache_write rate (cache must be rebuilt).
+    /// Cold: context size × cache-write rate, weighted by the last turn's
+    ///       5m/1h split. Falls back to the 5m rate when the last turn had
+    ///       no cache_creation tokens (no signal for the mix).
     func estimatedNextTurnCost(at now: Date) -> Double {
         guard let last = turns.max(by: { $0.timestamp < $1.timestamp }) else { return 0 }
         guard let rates = Pricing.rates(for: last.model) else { return 0 }
         let context = Double(last.contextSize)
         switch cacheStatus(at: now) {
-        case .warm: return context * rates.cacheRead / 1_000_000.0
-        case .cold: return context * rates.cacheWrite / 1_000_000.0
+        case .warm:
+            return context * rates.cacheRead / 1_000_000.0
+        case .cold:
+            let total = last.cacheCreation5mTokens + last.cacheCreation1hTokens
+            let writeRate: Double
+            if total > 0 {
+                let frac1h = Double(last.cacheCreation1hTokens) / Double(total)
+                writeRate = rates.cacheWrite5m * (1.0 - frac1h) + rates.cacheWrite1h * frac1h
+            } else {
+                writeRate = rates.cacheWrite5m
+            }
+            return context * writeRate / 1_000_000.0
         }
     }
 

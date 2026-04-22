@@ -100,4 +100,32 @@ final class ConversationTests: XCTestCase {
         )
         XCTAssertEqual(c.estimatedNextTurnCost(at: Date()), 0.0)
     }
+
+    /// When the last turn used a mix of 5m and 1h cache writes, the cold
+    /// estimate weights the write-rate by that mix instead of using a flat 5m.
+    func test_estimatedNextTurnCost_coldWeightsWriteRateByLastTurnMix() {
+        // 1M context: 200k cache_read, 800k cache_creation (200k 5m + 600k 1h).
+        // On opus 4.7: 5m = $6.25/M, 1h = $10.00/M. Write fraction = 75% 1h.
+        // Effective write rate = 0.25*6.25 + 0.75*10 = 9.0625
+        // 1M * 9.0625 / 1M = $9.0625
+        let t = Turn(
+            requestId: "r", sessionId: "s",
+            timestamp: Date(timeIntervalSince1970: 1000),
+            model: "claude-opus-4-7",
+            inputTokens: 0,
+            cacheCreation5mTokens: 200_000,
+            cacheCreation1hTokens: 600_000,
+            cacheReadTokens: 200_000,
+            outputTokens: 1,
+            stopReason: "end_turn",
+            isSubagent: false
+        )
+        let c = Conversation(
+            id: "s", projectName: "/x",
+            filePath: URL(fileURLWithPath: "/tmp/x.jsonl"),
+            turns: [t], ttlSeconds: 300
+        )
+        let now = Date(timeIntervalSince1970: 1500)  // cold (TTL 300, elapsed 500)
+        XCTAssertEqual(c.estimatedNextTurnCost(at: now), 9.0625, accuracy: 0.0001)
+    }
 }

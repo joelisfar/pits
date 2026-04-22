@@ -62,13 +62,29 @@ enum JSONLDecoder {
             let requestId = obj["requestId"] as? String ?? ""
             let stopReason = msg["stop_reason"] as? String
 
+            // cache_creation is split into {ephemeral_5m_input_tokens,
+            // ephemeral_1h_input_tokens} (different rates: 1.25× vs 2× base).
+            // Older entries only carry the flat cache_creation_input_tokens —
+            // treat those as 5m (the API default).
+            let flatCacheCreation = usage["cache_creation_input_tokens"] as? Int ?? 0
+            let cc5m: Int
+            let cc1h: Int
+            if let cc = usage["cache_creation"] as? [String: Any] {
+                cc5m = cc["ephemeral_5m_input_tokens"] as? Int ?? 0
+                cc1h = cc["ephemeral_1h_input_tokens"] as? Int ?? 0
+            } else {
+                cc5m = flatCacheCreation
+                cc1h = 0
+            }
+
             let turn = Turn(
                 requestId: requestId,
                 sessionId: sessionId,
                 timestamp: ts,
                 model: model,
                 inputTokens: usage["input_tokens"] as? Int ?? 0,
-                cacheCreationTokens: usage["cache_creation_input_tokens"] as? Int ?? 0,
+                cacheCreation5mTokens: cc5m,
+                cacheCreation1hTokens: cc1h,
                 cacheReadTokens: usage["cache_read_input_tokens"] as? Int ?? 0,
                 outputTokens: usage["output_tokens"] as? Int ?? 0,
                 stopReason: stopReason,
