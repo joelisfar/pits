@@ -216,7 +216,7 @@ final class ConversationStore: ObservableObject {
                 id: sid, projectName: projectName,
                 title: parser.title(sessionId: sid),
                 firstMessageText: parser.firstMessageText(sessionId: sid),
-                filePath: url, turns: turns, humanTurns: humans, ttlSeconds: ttlSeconds
+                filePath: url, turns: turns, humanTurns: humans
             ))
         }
         result.sort { $0.lastActivityTimestamp > $1.lastActivityTimestamp }

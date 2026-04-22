@@ -64,18 +64,6 @@ final class ConversationStoreTests: XCTestCase {
         XCTAssertEqual(store.conversations.map(\.id), ["sb", "sa"])
     }
 
-    func test_updatesWhenTTLChanges() {
-        let store = makeStore()
-        store.ingestForTesting(
-            url: URL(fileURLWithPath: "/tmp/-a/a.jsonl"),
-            line: #"{"type":"assistant","sessionId":"s","requestId":"r","timestamp":"2026-04-21T10:00:00.000Z","message":{"model":"claude-opus-4-6","usage":{"input_tokens":1,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":1}}}"#
-        )
-        XCTAssertEqual(store.conversations.first?.ttlSeconds, 300)
-
-        store.ttlSeconds = 600
-        XCTAssertEqual(store.conversations.first?.ttlSeconds, 600)
-    }
-
     func test_batchIngest_producesCorrectState() {
         let store = makeStore()
         let url = URL(fileURLWithPath: "/Users/j/.claude/projects/-Users-j-Projects-demo/abc.jsonl")

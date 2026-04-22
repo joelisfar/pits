@@ -3,18 +3,23 @@ import XCTest
 
 final class CacheTimerTests: XCTestCase {
     private func conversation(id: String, lastResponse: TimeInterval, ttl: TimeInterval) -> Conversation {
-        Conversation(
+        // Encode the desired TTL into the turn's cache_creation tokens so that
+        // observedTTLSeconds resolves to the value the test asked for.
+        let fivem: Int = (ttl == 300) ? 1_000 : 0
+        let oneh: Int = (ttl == 3600) ? 1_000 : 0
+        return Conversation(
             id: id, projectName: "/x",
             filePath: URL(fileURLWithPath: "/tmp/\(id).jsonl"),
             turns: [
                 Turn(requestId: "r-\(id)", sessionId: id,
                      timestamp: Date(timeIntervalSince1970: lastResponse),
                      model: "claude-opus-4-6",
-                     inputTokens: 0, cacheCreationTokens: 0,
+                     inputTokens: 0,
+                     cacheCreation5mTokens: fivem,
+                     cacheCreation1hTokens: oneh,
                      cacheReadTokens: 0, outputTokens: 0,
                      stopReason: "end_turn", isSubagent: false)
-            ],
-            ttlSeconds: ttl
+            ]
         )
     }
 

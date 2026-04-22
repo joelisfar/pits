@@ -19,6 +19,7 @@ struct ConversationRowView: View {
         switch status {
         case .warm: return remaining <= 60 ? .red : .orange
         case .cold: return .secondary
+        case .new: return .secondary
         }
     }
 
@@ -147,7 +148,7 @@ struct ConversationRowView: View {
         id: "s", projectName: "/Users/j/Projects/demo",
         title: "Wire session titles into the row view",
         filePath: URL(fileURLWithPath: "/tmp/x.jsonl"),
-        turns: [turn], ttlSeconds: 300
+        turns: [turn]
     )
     return ConversationRowView(conversation: c, now: Date(), isExpanded: .constant(false))
         .padding()
