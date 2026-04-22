@@ -245,6 +245,10 @@ final class ConversationStore: ObservableObject {
         chimeCutoff = date
     }
 
+    func setOpenSessionIdsForTesting(_ ids: Set<String>) {
+        openSessionIds = ids
+    }
+
     /// Synchronously runs one cache-timer tick. Tests use this to drive
     /// transitionedToCold / oneMinuteWarning / fifteenSecondWarning events
     /// without scheduling a real Timer.
@@ -337,8 +341,7 @@ final class ConversationStore: ObservableObject {
             // TimelineView, so no snapshot rebuild is needed.
             sound.play(.newCold)
         case .fifteenSecondWarning:
-            // Task 7 wires the chime.
-            break
+            sound.play(.fifteenSecondsUntilCold)
         }
     }
 }
