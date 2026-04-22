@@ -17,9 +17,8 @@ struct PitsApp: App {
         let s = ConversationStore(rootDirectory: root, ttlSeconds: ttl, cache: cache)
         _store = StateObject(wrappedValue: s)
 
-        // Save before quit. With LSUIElement = true and a MenuBarExtra scene
-        // there's no window lifecycle, so willTerminate is the only reliable
-        // signal that the app is going away.
+        // Save before quit — WindowGroup.onDisappear is unreliable for app
+        // termination, so we observe the canonical AppKit notification.
         NotificationCenter.default.addObserver(
             forName: NSApplication.willTerminateNotification,
             object: nil,
@@ -30,9 +29,8 @@ struct PitsApp: App {
     }
 
     var body: some Scene {
-        MenuBarExtra("Pits", systemImage: "flame.fill") {
+        WindowGroup("Pits", id: "pits-main") {
             ConversationListView(store: store)
-                .frame(width: 460, height: 520)
                 .onAppear {
                     // Skip starting the live watcher when running under XCTest —
                     // backfilling ~/.claude/projects/ on the main thread during
@@ -40,11 +38,37 @@ struct PitsApp: App {
                     guard ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil else { return }
                     store.start()
                 }
+                .onDisappear { store.stop() }
         }
-        .menuBarExtraStyle(.window)
+        .defaultSize(width: 580, height: 420)
+        .windowResizability(.contentMinSize)
+        .windowStyle(.hiddenTitleBar)
+
+        MenuBarExtra("Pits", systemImage: "flame.fill") {
+            MenuBarContent()
+        }
 
         Settings {
             SettingsView(store: store)
         }
+    }
+}
+
+/// Menu shown by the menu bar flame icon. Lives in its own view so it has
+/// access to `@Environment(\.openWindow)` for the "Open Pits" action.
+private struct MenuBarContent: View {
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some View {
+        Button("Open Pits") {
+            NSApp.activate(ignoringOtherApps: true)
+            openWindow(id: "pits-main")
+        }
+        .keyboardShortcut("o")
+
+        Divider()
+
+        Button("Quit Pits") { NSApp.terminate(nil) }
+            .keyboardShortcut("q")
     }
 }
