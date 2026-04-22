@@ -40,6 +40,19 @@ final class CacheTimerTests: XCTestCase {
         XCTAssertTrue(events3.isEmpty)
     }
 
+    func test_tick_suppressesTransitionedToCold_whenSessionNotOpen() {
+        // Regression for v0.1.8 bug: closed-tab cache expiry was chiming.
+        let timer = CacheTimer()
+        let convs = [conversation(id: "s", lastResponse: 1000, ttl: 300)]
+
+        // Establish warm baseline with the session closed.
+        _ = timer.tick(conversations: convs, at: Date(timeIntervalSince1970: 1100), openSessionIds: [])
+
+        // Cross into cold while session is still closed: no event.
+        let events = timer.tick(conversations: convs, at: Date(timeIntervalSince1970: 1301), openSessionIds: [])
+        XCTAssertTrue(events.isEmpty, "closed session should not emit transitionedToCold, got: \(events)")
+    }
+
     func test_tick_emitsOneMinuteWarning_onceOnly() {
         let timer = CacheTimer()
         let convs = [conversation(id: "s", lastResponse: 1000, ttl: 300)]

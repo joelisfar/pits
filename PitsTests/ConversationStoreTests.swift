@@ -216,6 +216,9 @@ final class ConversationStoreTests: XCTestCase {
         // CacheTimer needs two ticks to fire transitionedToCold: the first tick
         // records the initial warm state; the second detects the warm → cold
         // transition. Tick at "now" (warm), then at "now + 6 minutes" (cold).
+        // Session must be open for the chime to fire (closed-tab transitions are
+        // suppressed — see test_tick_suppressesTransitionedToCold_whenSessionNotOpen).
+        store.setOpenSessionIdsForTesting(["s"])
         store.tickForTesting(at: now)
         store.tickForTesting(at: now.addingTimeInterval(360))
 
