@@ -7,10 +7,24 @@ struct SettingsView: View {
     @State private var launchAtLogin: Bool = (SMAppService.mainApp.status == .enabled)
     @State private var launchError: String?
 
+    private let availableSounds = SystemSounds.available
+    private let soundManager = SoundManager()
+
     var body: some View {
         Form {
-            Section {
+            Section("Sounds") {
                 Toggle("Play notification sounds", isOn: $soundsEnabled)
+                if soundsEnabled {
+                    ForEach(SoundEvent.allCases, id: \.self) { event in
+                        SoundEventRow(
+                            event: event,
+                            availableSounds: availableSounds,
+                            soundManager: soundManager
+                        )
+                    }
+                }
+            }
+            Section("Window") {
                 Toggle("Keep window on top", isOn: $alwaysOnTop)
                 Toggle("Launch at login", isOn: Binding(
                     get: { launchAtLogin },
@@ -33,7 +47,6 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
-        .scrollDisabled(true)
-        .frame(width: 440, height: 180)
+        .frame(width: 440)
     }
 }
