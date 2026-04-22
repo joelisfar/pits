@@ -42,9 +42,33 @@ struct PitsApp: App {
         }
         .defaultSize(width: 580, height: 420)
         .windowResizability(.contentMinSize)
+        .windowStyle(.hiddenTitleBar)
+
+        MenuBarExtra("Pits", systemImage: "flame.fill") {
+            MenuBarContent()
+        }
 
         Settings {
             SettingsView(store: store)
         }
+    }
+}
+
+/// Menu shown by the menu bar flame icon. Lives in its own view so it has
+/// access to `@Environment(\.openWindow)` for the "Open Pits" action.
+private struct MenuBarContent: View {
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some View {
+        Button("Open Pits") {
+            NSApp.activate(ignoringOtherApps: true)
+            openWindow(id: "pits-main")
+        }
+        .keyboardShortcut("o")
+
+        Divider()
+
+        Button("Quit Pits") { NSApp.terminate(nil) }
+            .keyboardShortcut("q")
     }
 }
