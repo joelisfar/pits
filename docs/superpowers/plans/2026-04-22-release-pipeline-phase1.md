@@ -96,9 +96,11 @@ Expected: both succeed with no errors.
 
 - [ ] **Step 5: Commit**
 
+`Pits.xcodeproj/` is gitignored in this repo (regenerated via xcodegen on demand) — don't stage it.
+
 ```sh
-git add project.yml .gitignore Pits.xcodeproj
-git commit -m "chore: align project.yml versions with shipped v0.1.1; ignore build/ and dist/"
+git add project.yml .gitignore
+git commit -m "chore: align project.yml versions with shipped v0.1.1; ignore dist/"
 ```
 
 ---
@@ -558,7 +560,8 @@ Replace with:
 tag_and_push() {
   echo "→ tag_and_push"
 
-  git add project.yml Pits.xcodeproj
+  # Pits.xcodeproj/ is gitignored — regenerated on demand via xcodegen.
+  git add project.yml
   git commit -m "release: v$VERSION"
   git tag "v$VERSION"
 
