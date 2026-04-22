@@ -280,7 +280,7 @@ final class ConversationStore: ObservableObject {
                    t.timestamp > chimeCutoff,
                    !t.isSubagent,
                    let stop = t.stopReason, stop != "tool_use" {
-                    sound.playMessageReceived()
+                    sound.play(.agentTurnCompleted)
                     onNewTurn?(t)
                 }
             }
@@ -310,7 +310,7 @@ final class ConversationStore: ObservableObject {
         for e in events {
             switch e {
             case .oneMinuteWarning:
-                sound.playOneMinuteWarning()
+                sound.play(.oneMinuteUntilCold)
             case .transitionedToCold:
                 // Derived values recompute on the next UI tick via
                 // TimelineView — no snapshot rebuild required.
