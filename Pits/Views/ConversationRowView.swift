@@ -12,7 +12,7 @@ struct ConversationRowView: View {
 
     private var accent: Color {
         switch status {
-        case .warm: return .orange
+        case .warm: return remaining <= 60 ? .red : .orange
         case .cold: return .secondary
         }
     }

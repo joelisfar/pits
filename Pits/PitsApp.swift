@@ -1,8 +1,80 @@
 import SwiftUI
 import AppKit
+import Combine
+
+/// Bridges the AppKit-owned `NSStatusItem` to the SwiftUI world: holds a weak
+/// reference to the store the AppDelegate observes, and the `openWindow`
+/// closure a hidden SwiftUI view installs so a status-item click can open the
+/// main window without a MenuBarExtra menu.
+@MainActor
+final class MenuBarRouter {
+    static let shared = MenuBarRouter()
+    weak var store: ConversationStore?
+    var openMainWindow: (() -> Void)?
+}
+
+/// Owns the menu bar `NSStatusItem`. We can't use `MenuBarExtra` here because
+/// its label ignores `.foregroundStyle` (renders as template) and it forces a
+/// menu/popover on click — we want a raw click action with a tintable symbol.
+@MainActor
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    private var statusItem: NSStatusItem?
+    private var cancellables: Set<AnyCancellable> = []
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        if let button = item.button {
+            button.target = self
+            button.action = #selector(statusItemClicked)
+        }
+        statusItem = item
+
+        if let store = MenuBarRouter.shared.store {
+            store.objectWillChange
+                .sink { [weak self] in
+                    Task { @MainActor in self?.refreshIcon() }
+                }
+                .store(in: &cancellables)
+        }
+        refreshIcon()
+    }
+
+    @objc private func statusItemClicked() {
+        NSApp.activate(ignoringOtherApps: true)
+        MenuBarRouter.shared.openMainWindow?()
+    }
+
+    private func refreshIcon() {
+        guard let button = statusItem?.button else { return }
+        let state = MenuBarRouter.shared.store?.menuBarIconState(at: Date()) ?? .idle
+
+        guard let base = NSImage(systemSymbolName: "flame.fill",
+                                 accessibilityDescription: "Pits") else { return }
+        switch state {
+        case .idle:
+            base.isTemplate = true
+            button.image = base
+        case .active:
+            button.image = Self.tinted(base, color: .systemOrange)
+        case .warning:
+            button.image = Self.tinted(base, color: .systemRed)
+        }
+    }
+
+    /// Returns a non-template copy of `image` tinted with `color` via a
+    /// palette symbol configuration — the reliable way to get a colored SF
+    /// Symbol in the menu bar.
+    private static func tinted(_ image: NSImage, color: NSColor) -> NSImage {
+        let config = NSImage.SymbolConfiguration(paletteColors: [color])
+        let out = image.withSymbolConfiguration(config) ?? image
+        out.isTemplate = false
+        return out
+    }
+}
 
 @main
 struct PitsApp: App {
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var store: ConversationStore
     @AppStorage(SoundManager.soundsEnabledKey) private var soundsEnabled: Bool = true
 
@@ -24,6 +96,11 @@ struct PitsApp: App {
 
         let s = ConversationStore(rootDirectory: root, ttlSeconds: ttl, cache: cache)
         _store = StateObject(wrappedValue: s)
+
+        // Hand the store to the menu bar router before the AppDelegate's
+        // applicationDidFinishLaunching runs so the icon gets wired up and
+        // can subscribe to store changes from the first tick.
+        MenuBarRouter.shared.store = s
 
         // Save before quit — WindowGroup.onDisappear is unreliable for app
         // termination, so we observe the canonical AppKit notification.
@@ -55,7 +132,11 @@ struct PitsApp: App {
     }
 
     var body: some Scene {
-        WindowGroup("Pits", id: "pits-main") {
+        // `Window` (singleton) rather than `WindowGroup`: the status-item
+        // click calls `openWindow(id:)`, which on a `WindowGroup` creates a
+        // new window each time. `Window` brings the existing instance
+        // forward, which is the behavior we want.
+        Window("Pits", id: "pits-main") {
             ConversationListView(store: store)
                 .onAppear {
                     // Skip starting the live watcher when running under XCTest —
@@ -65,14 +146,11 @@ struct PitsApp: App {
                     store.start()
                 }
                 .onDisappear { store.stop() }
+                .background(OpenWindowInstaller())
         }
         .defaultSize(width: 580, height: 420)
         .windowResizability(.contentMinSize)
         .windowStyle(.hiddenTitleBar)
-
-        MenuBarExtra("Pits", systemImage: "flame.fill") {
-            MenuBarContent()
-        }
 
         Settings {
             SettingsView(store: store)
@@ -80,21 +158,20 @@ struct PitsApp: App {
     }
 }
 
-/// Menu shown by the menu bar flame icon. Lives in its own view so it has
-/// access to `@Environment(\.openWindow)` for the "Open Pits" action.
-private struct MenuBarContent: View {
+/// Zero-size helper that captures SwiftUI's `openWindow` action and publishes
+/// it to `MenuBarRouter` so the AppKit status-item click can re-open the
+/// window after it's been closed.
+private struct OpenWindowInstaller: View {
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
-        Button("Open Pits") {
-            NSApp.activate(ignoringOtherApps: true)
-            openWindow(id: "pits-main")
-        }
-        .keyboardShortcut("o")
-
-        Divider()
-
-        Button("Quit Pits") { NSApp.terminate(nil) }
-            .keyboardShortcut("q")
+        Color.clear
+            .frame(width: 0, height: 0)
+            .onAppear {
+                MenuBarRouter.shared.openMainWindow = {
+                    NSApp.activate(ignoringOtherApps: true)
+                    openWindow(id: "pits-main")
+                }
+            }
     }
 }
