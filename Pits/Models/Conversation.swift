@@ -119,6 +119,27 @@ struct Conversation: Identifiable, Equatable {
         }
     }
 
+    // MARK: - Filtering
+
+    /// Returns a new `Conversation` containing only `turns` and `humanTurns`
+    /// whose timestamps fall in `month`'s `[start, nextMonthStart)` range.
+    /// Returns nil when nothing remains in scope.
+    func filtered(toMonth month: MonthScope, in cal: Calendar = Calendar.current) -> Conversation? {
+        let range = month.dateRange(in: cal)
+        let keptTurns = turns.filter { range.contains($0.timestamp) }
+        let keptHumans = humanTurns.filter { range.contains($0.timestamp) }
+        if keptTurns.isEmpty && keptHumans.isEmpty { return nil }
+        return Conversation(
+            id: id,
+            projectName: projectName,
+            title: title,
+            filePath: filePath,
+            turns: keptTurns,
+            humanTurns: keptHumans,
+            ttlSeconds: ttlSeconds
+        )
+    }
+
     // MARK: - Path parsing
 
     /// Convert a JSONL file URL like
