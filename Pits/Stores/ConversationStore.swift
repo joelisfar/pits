@@ -15,6 +15,11 @@ final class ConversationStore: ObservableObject {
     /// Contiguous descending list of months that have at least one JSONL
     /// in the root directory tree. Computed by `discoverActiveMonths()`.
     @Published private(set) var availableMonths: [MonthScope] = []
+    /// SessionIds whose Claude Code process currently owns an open VS Code
+    /// tab (or terminal CLI). Refreshed on every tick via
+    /// `openSessionsWatcher`. Used to suppress user-facing warnings for
+    /// closed conversations and to drive the row's open/closed indicator.
+    @Published private(set) var openSessionIds: Set<String> = []
     @Published var ttlSeconds: TimeInterval {
         didSet { rebuildSnapshot() }
     }
@@ -27,6 +32,7 @@ final class ConversationStore: ObservableObject {
     private let cacheTimer = CacheTimer()
     private let sound: SoundManager
     private let cache: SnapshotCache?
+    private let openSessionsWatcher: OpenSessionsWatcher
     private var fileBySession: [String: URL]
     private var tickTimer: Timer?
     /// Turns with a timestamp strictly greater than this chime.
@@ -38,12 +44,14 @@ final class ConversationStore: ObservableObject {
         rootDirectory: URL,
         ttlSeconds: TimeInterval,
         sound: SoundManager = SoundManager(),
-        cache: SnapshotCache? = nil
+        cache: SnapshotCache? = nil,
+        openSessionsWatcher: OpenSessionsWatcher = OpenSessionsWatcher()
     ) {
         self.rootDirectory = rootDirectory
         self.ttlSeconds = ttlSeconds
         self.sound = sound
         self.cache = cache
+        self.openSessionsWatcher = openSessionsWatcher
 
         // Hydrate from cache if present. Pruning rule: drop sessions whose
         // backing JSONL file no longer exists on disk.
@@ -112,11 +120,19 @@ final class ConversationStore: ObservableObject {
         chimeCutoff = Date()
         isLoading = true
         discoverActiveMonths()
+        refreshOpenSessionIds()
         watcher.mtimeRange = selectedMonth.dateRange()
         watcher.start()
         startTimer()
         let w = watcher
         DispatchQueue.global(qos: .userInitiated).async { w.backfill() }
+    }
+
+    /// Rescan `~/.claude/sessions/` and republish `openSessionIds`. Called
+    /// on every tick; exposed publicly so tests can drive refreshes
+    /// deterministically.
+    func refreshOpenSessionIds() {
+        openSessionIds = openSessionsWatcher.openSessionIds()
     }
 
     /// Switch the active month scope. Backfills any not-yet-loaded files in
@@ -288,7 +304,12 @@ final class ConversationStore: ObservableObject {
     }
 
     private func tick() {
-        let events = cacheTimer.tick(conversations: conversations, at: Date())
+        refreshOpenSessionIds()
+        let events = cacheTimer.tick(
+            conversations: conversations,
+            at: Date(),
+            openSessionIds: openSessionIds
+        )
         for e in events {
             switch e {
             case .oneMinuteWarning:

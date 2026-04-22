@@ -20,6 +20,7 @@ struct ConversationListView: View {
                                     ConversationCell(
                                         conversation: c,
                                         now: context.date,
+                                        isOpen: store.openSessionIds.contains(c.id),
                                         isExpanded: binding(for: c.id)
                                     )
                                     .tag(c.id)
@@ -222,15 +223,16 @@ private struct DayHeader: View {
 private struct ConversationCell: View {
     let conversation: Conversation
     let now: Date
+    let isOpen: Bool
     @Binding var isExpanded: Bool
 
     var body: some View {
         VStack(spacing: 0) {
             if !conversation.hasSubagentTurns {
-                ConversationRowView(conversation: conversation, now: now)
+                ConversationRowView(conversation: conversation, now: now, isOpen: isOpen)
             } else {
                 ConversationRowView(
-                    conversation: conversation, now: now, isExpanded: $isExpanded
+                    conversation: conversation, now: now, isOpen: isOpen, isExpanded: $isExpanded
                 )
                 if isExpanded {
                     SubagentSummaryRow(

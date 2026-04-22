@@ -3,6 +3,11 @@ import SwiftUI
 struct ConversationRowView: View {
     let conversation: Conversation
     let now: Date
+    /// Whether the user currently has this session open (a live Claude Code
+    /// tab or terminal). Closed sessions still appear in the list (they're
+    /// real conversations with real cost) but are de-emphasized: no status
+    /// dot, no live countdown, reduced row opacity.
+    var isOpen: Bool = true
     /// When non-nil the row is a parent with subagents — renders a chevron
     /// the parent cell flips to expand/collapse. `nil` hides the chevron.
     var isExpanded: Binding<Bool>? = nil
@@ -15,6 +20,25 @@ struct ConversationRowView: View {
         case .warm: return remaining <= 60 ? .red : .orange
         case .cold: return .secondary
         }
+    }
+
+    /// Dot fill: accent for warm+open, gray for cold+open, hidden for closed.
+    /// The dot's frame is always reserved so the title column doesn't jump
+    /// when a session transitions open ↔ closed.
+    private var dotFill: Color {
+        guard isOpen else { return .clear }
+        return status == .warm ? accent : .secondary
+    }
+
+    /// Countdown is a live, attention-grabbing element — only shown when the
+    /// user has an open tab to act on. Closed-but-warm sessions still display
+    /// the "warm" label (the cache is genuinely warm server-side) but without
+    /// the ticking timer, since nothing is going to refresh it.
+    private var showCountdown: Bool { isOpen && status == .warm }
+
+    private var rowOpacity: Double {
+        if !isOpen { return 0.45 }
+        return status == .cold ? 0.65 : 1.0
     }
 
     private var remainingText: String {
@@ -49,11 +73,12 @@ struct ConversationRowView: View {
                 Spacer().frame(width: 18)
             }
 
-            // Status dot — pinned to the title line, Mail-style.
-            // Hidden for cold sessions but the column stays reserved so the
-            // title column lines up whether warm or cold.
+            // Status dot — pinned to the title line, Mail-style. Three states:
+            // open+warm = accent dot, open+cold = gray dot, closed = hidden.
+            // The column stays reserved in all cases so the title column
+            // lines up across rows.
             Circle()
-                .fill(status == .warm ? accent : Color.clear)
+                .fill(dotFill)
                 .frame(width: 8, height: 8)
                 .padding(.top, 5)
 
@@ -91,13 +116,13 @@ struct ConversationRowView: View {
             }
 
             VStack(alignment: .trailing, spacing: 2) {
-                // Always render the countdown line — opacity 0 when cold —
-                // so cold rows match warm row heights and the list doesn't
-                // reflow as sessions transition warm → cold.
-                Text(status == .warm ? remainingText : " ")
+                // Always render the countdown line — opacity 0 when not
+                // displayed — so all rows share a consistent height and the
+                // list doesn't reflow on warm ↔ cold or open ↔ closed.
+                Text(showCountdown ? remainingText : " ")
                     .font(.system(.body, design: .monospaced))
                     .foregroundStyle(accent)
-                    .opacity(status == .warm ? 1 : 0)
+                    .opacity(showCountdown ? 1 : 0)
                 Text(status == .warm ? "warm" : "cold")
                     .font(.system(.caption2, design: .monospaced))
                     .foregroundStyle(.secondary)
@@ -105,7 +130,7 @@ struct ConversationRowView: View {
             .frame(minWidth: 60, alignment: .trailing)
         }
         .padding(.vertical, 4)
-        .opacity(status == .cold ? 0.65 : 1.0)
+        .opacity(rowOpacity)
     }
 }
 

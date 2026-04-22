@@ -23,15 +23,15 @@ final class CacheTimerTests: XCTestCase {
         let convs = [conversation(id: "s", lastResponse: 1000, ttl: 300)]
 
         // Warm at now=1100 (200s left).
-        let events1 = timer.tick(conversations: convs, at: Date(timeIntervalSince1970: 1100))
+        let events1 = timer.tick(conversations: convs, at: Date(timeIntervalSince1970: 1100), openSessionIds: ["s"])
         XCTAssertTrue(events1.isEmpty)
 
         // Cold at now=1301 (past TTL).
-        let events2 = timer.tick(conversations: convs, at: Date(timeIntervalSince1970: 1301))
+        let events2 = timer.tick(conversations: convs, at: Date(timeIntervalSince1970: 1301), openSessionIds: ["s"])
         XCTAssertEqual(events2, [.transitionedToCold("s")])
 
         // No repeat on subsequent ticks while still cold.
-        let events3 = timer.tick(conversations: convs, at: Date(timeIntervalSince1970: 1400))
+        let events3 = timer.tick(conversations: convs, at: Date(timeIntervalSince1970: 1400), openSessionIds: ["s"])
         XCTAssertTrue(events3.isEmpty)
     }
 
@@ -40,15 +40,15 @@ final class CacheTimerTests: XCTestCase {
         let convs = [conversation(id: "s", lastResponse: 1000, ttl: 300)]
 
         // 61 seconds remaining: no warning yet.
-        let events1 = timer.tick(conversations: convs, at: Date(timeIntervalSince1970: 1239))
+        let events1 = timer.tick(conversations: convs, at: Date(timeIntervalSince1970: 1239), openSessionIds: ["s"])
         XCTAssertTrue(events1.isEmpty)
 
         // 59 seconds remaining: warning fires.
-        let events2 = timer.tick(conversations: convs, at: Date(timeIntervalSince1970: 1241))
+        let events2 = timer.tick(conversations: convs, at: Date(timeIntervalSince1970: 1241), openSessionIds: ["s"])
         XCTAssertEqual(events2, [.oneMinuteWarning("s")])
 
         // Subsequent ticks in the warning window: no repeat.
-        let events3 = timer.tick(conversations: convs, at: Date(timeIntervalSince1970: 1260))
+        let events3 = timer.tick(conversations: convs, at: Date(timeIntervalSince1970: 1260), openSessionIds: ["s"])
         XCTAssertTrue(events3.isEmpty)
     }
 
@@ -56,15 +56,63 @@ final class CacheTimerTests: XCTestCase {
         let timer = CacheTimer()
         var convs = [conversation(id: "s", lastResponse: 1000, ttl: 300)]
 
-        _ = timer.tick(conversations: convs, at: Date(timeIntervalSince1970: 1400)) // cold + transition emitted
+        _ = timer.tick(conversations: convs, at: Date(timeIntervalSince1970: 1400), openSessionIds: ["s"]) // cold + transition emitted
         // Simulate a new assistant reply at ts=1500 — cache becomes warm again.
         convs = [conversation(id: "s", lastResponse: 1500, ttl: 300)]
 
         // New tick while warm: nothing.
-        _ = timer.tick(conversations: convs, at: Date(timeIntervalSince1970: 1550))
+        _ = timer.tick(conversations: convs, at: Date(timeIntervalSince1970: 1550), openSessionIds: ["s"])
 
         // Cold transition should fire again once it times out.
-        let events = timer.tick(conversations: convs, at: Date(timeIntervalSince1970: 1801))
+        let events = timer.tick(conversations: convs, at: Date(timeIntervalSince1970: 1801), openSessionIds: ["s"])
         XCTAssertEqual(events, [.transitionedToCold("s")])
+    }
+
+    // MARK: - Open-session gating for the one-minute warning
+
+    func test_tick_suppressesOneMinuteWarning_whenSessionNotOpen() {
+        let timer = CacheTimer()
+        let convs = [conversation(id: "s", lastResponse: 1000, ttl: 300)]
+
+        // Establish warm state well before the warning window so the warning
+        // would otherwise fire on the next tick.
+        _ = timer.tick(conversations: convs, at: Date(timeIntervalSince1970: 1100), openSessionIds: [])
+
+        // Cross into the warning window with the session still closed.
+        let events = timer.tick(conversations: convs, at: Date(timeIntervalSince1970: 1241), openSessionIds: [])
+        XCTAssertTrue(events.isEmpty, "expected no warning for a closed session, got \(events)")
+    }
+
+    func test_tick_firesOneMinuteWarning_onReopen_withinWindow() {
+        let timer = CacheTimer()
+        let convs = [conversation(id: "s", lastResponse: 1000, ttl: 300)]
+
+        // Warm, session closed, cross into window: suppressed.
+        _ = timer.tick(conversations: convs, at: Date(timeIntervalSince1970: 1100), openSessionIds: [])
+        _ = timer.tick(conversations: convs, at: Date(timeIntervalSince1970: 1241), openSessionIds: [])
+
+        // User reopens the tab while still inside the warning window.
+        let events = timer.tick(conversations: convs, at: Date(timeIntervalSince1970: 1250), openSessionIds: ["s"])
+        XCTAssertEqual(events, [.oneMinuteWarning("s")])
+
+        // Does not re-fire on subsequent ticks.
+        let events2 = timer.tick(conversations: convs, at: Date(timeIntervalSince1970: 1260), openSessionIds: ["s"])
+        XCTAssertTrue(events2.isEmpty)
+    }
+
+    func test_tick_suppressesOneMinuteWarning_onFirstObservation_whenAlreadyInWindow() {
+        // App just launched; a conversation is already inside the warning
+        // window and closed. We must not fire a retroactive warning even if
+        // the user later reopens it — the warning is for *entry* to the
+        // window, not for already being inside it.
+        let timer = CacheTimer()
+        let convs = [conversation(id: "s", lastResponse: 1000, ttl: 300)]
+
+        // First observation already inside the window, closed.
+        _ = timer.tick(conversations: convs, at: Date(timeIntervalSince1970: 1250), openSessionIds: [])
+
+        // Reopen later, still in window: no warning.
+        let events = timer.tick(conversations: convs, at: Date(timeIntervalSince1970: 1255), openSessionIds: ["s"])
+        XCTAssertTrue(events.isEmpty)
     }
 }
