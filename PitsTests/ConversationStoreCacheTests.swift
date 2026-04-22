@@ -116,7 +116,7 @@ final class ConversationStoreCacheTests: XCTestCase {
         // ingestForTesting bypasses the watcher; manually persist with the
         // offset reflecting that the first line was already consumed.
         try setupCache.saveNow(PersistedState(
-            schemaVersion: 1,
+            schemaVersion: SnapshotCache.currentSchemaVersion,
             savedAt: Date(),
             daysLoaded: 1,
             fileBySession: ["s1": file],

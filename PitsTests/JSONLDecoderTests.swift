@@ -75,6 +75,25 @@ final class JSONLDecoderTests: XCTestCase {
         XCTAssertNil(decode(""))
     }
 
+    /// Real Claude Code JSONL splits cache_creation into 5m/1h. We must honour
+    /// that split so the per-tier price (1.25× vs 2× base) is applied correctly.
+    func test_assistantTurn_splitsCacheCreationByTier() {
+        let line = #"{"type":"assistant","sessionId":"s","requestId":"r","timestamp":"2026-04-21T10:00:00.000Z","message":{"model":"claude-opus-4-7","usage":{"input_tokens":3,"cache_creation_input_tokens":4951,"cache_read_input_tokens":166357,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":4951},"output_tokens":6}}}"#
+        guard case .turn(let t) = decode(line) else { return XCTFail("expected turn") }
+        XCTAssertEqual(t.cacheCreation5mTokens, 0)
+        XCTAssertEqual(t.cacheCreation1hTokens, 4951)
+        XCTAssertEqual(t.cacheCreationTokens, 4951, "sum view stays correct")
+    }
+
+    /// Older entries (or fixtures) with only the flat `cache_creation_input_tokens`
+    /// field — no nested object — fall back to the 5m bucket (the API default).
+    func test_assistantTurn_flatCacheCreation_fallsBackTo5m() {
+        let line = #"{"type":"assistant","sessionId":"s","requestId":"r","timestamp":"2026-04-21T10:00:00.000Z","message":{"model":"claude-opus-4-6","usage":{"input_tokens":1,"cache_creation_input_tokens":1234,"cache_read_input_tokens":0,"output_tokens":1}}}"#
+        guard case .turn(let t) = decode(line) else { return XCTFail("expected turn") }
+        XCTAssertEqual(t.cacheCreation5mTokens, 1234)
+        XCTAssertEqual(t.cacheCreation1hTokens, 0)
+    }
+
     func test_humanTurn_mixedTextAndToolResult_isHuman() {
         // Defensive pin: an array with both text and tool_result blocks counts as
         // a human turn, matching the Python reference. If this behavior ever
