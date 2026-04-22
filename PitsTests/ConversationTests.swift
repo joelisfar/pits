@@ -153,6 +153,135 @@ final class ConversationTests: XCTestCase {
         XCTAssertEqual(c.estimatedNextTurnCost(at: now), 9.0625, accuracy: 0.0001)
     }
 
+    // MARK: - observedTTLSeconds
+
+    func test_observedTTL_nilWhenNoTurns() {
+        let c = Conversation(
+            id: "s", projectName: "/x",
+            filePath: URL(fileURLWithPath: "/tmp/x.jsonl"),
+            turns: [],
+            ttlSeconds: 300
+        )
+        XCTAssertNil(c.observedTTLSeconds)
+    }
+
+    func test_observedTTL_5mWhenLatestTurnHas5mTokens() {
+        let t = Turn(
+            requestId: "r", sessionId: "s",
+            timestamp: Date(timeIntervalSince1970: 1000),
+            model: "claude-opus-4-6",
+            inputTokens: 0,
+            cacheCreation5mTokens: 1_000,
+            cacheCreation1hTokens: 0,
+            cacheReadTokens: 0, outputTokens: 0,
+            stopReason: "end_turn", isSubagent: false
+        )
+        let c = Conversation(
+            id: "s", projectName: "/x",
+            filePath: URL(fileURLWithPath: "/tmp/x.jsonl"),
+            turns: [t], ttlSeconds: 300
+        )
+        XCTAssertEqual(c.observedTTLSeconds, 300)
+    }
+
+    func test_observedTTL_1hWhenLatestTurnHas1hTokens() {
+        let t = Turn(
+            requestId: "r", sessionId: "s",
+            timestamp: Date(timeIntervalSince1970: 1000),
+            model: "claude-opus-4-6",
+            inputTokens: 0,
+            cacheCreation5mTokens: 0,
+            cacheCreation1hTokens: 1_000,
+            cacheReadTokens: 0, outputTokens: 0,
+            stopReason: "end_turn", isSubagent: false
+        )
+        let c = Conversation(
+            id: "s", projectName: "/x",
+            filePath: URL(fileURLWithPath: "/tmp/x.jsonl"),
+            turns: [t], ttlSeconds: 300
+        )
+        XCTAssertEqual(c.observedTTLSeconds, 3600)
+    }
+
+    func test_observedTTL_latestCacheWritingTurnWins() {
+        // Turn 1 (earlier): 5m. Turn 2 (later): 1h. Expect 1h.
+        let t1 = Turn(
+            requestId: "r1", sessionId: "s",
+            timestamp: Date(timeIntervalSince1970: 1000),
+            model: "claude-opus-4-6",
+            inputTokens: 0,
+            cacheCreation5mTokens: 1_000,
+            cacheCreation1hTokens: 0,
+            cacheReadTokens: 0, outputTokens: 0,
+            stopReason: "end_turn", isSubagent: false
+        )
+        let t2 = Turn(
+            requestId: "r2", sessionId: "s",
+            timestamp: Date(timeIntervalSince1970: 2000),
+            model: "claude-opus-4-6",
+            inputTokens: 0,
+            cacheCreation5mTokens: 0,
+            cacheCreation1hTokens: 1_000,
+            cacheReadTokens: 0, outputTokens: 0,
+            stopReason: "end_turn", isSubagent: false
+        )
+        let c = Conversation(
+            id: "s", projectName: "/x",
+            filePath: URL(fileURLWithPath: "/tmp/x.jsonl"),
+            turns: [t1, t2], ttlSeconds: 300
+        )
+        XCTAssertEqual(c.observedTTLSeconds, 3600)
+    }
+
+    func test_observedTTL_walksBackPastZeroCacheTurn() {
+        // Turn 1 (earlier): 1h. Turn 2 (later): zero cache_creation tokens.
+        // Expect 1h — walk back through the no-cache turn to the last cache-writing turn.
+        let t1 = Turn(
+            requestId: "r1", sessionId: "s",
+            timestamp: Date(timeIntervalSince1970: 1000),
+            model: "claude-opus-4-6",
+            inputTokens: 0,
+            cacheCreation5mTokens: 0,
+            cacheCreation1hTokens: 1_000,
+            cacheReadTokens: 0, outputTokens: 0,
+            stopReason: "end_turn", isSubagent: false
+        )
+        let t2 = Turn(
+            requestId: "r2", sessionId: "s",
+            timestamp: Date(timeIntervalSince1970: 2000),
+            model: "claude-opus-4-6",
+            inputTokens: 0,
+            cacheCreation5mTokens: 0,
+            cacheCreation1hTokens: 0,
+            cacheReadTokens: 5_000, outputTokens: 0,
+            stopReason: "end_turn", isSubagent: false
+        )
+        let c = Conversation(
+            id: "s", projectName: "/x",
+            filePath: URL(fileURLWithPath: "/tmp/x.jsonl"),
+            turns: [t1, t2], ttlSeconds: 300
+        )
+        XCTAssertEqual(c.observedTTLSeconds, 3600)
+    }
+
+    func test_observedTTL_nilWhenNoCacheWritingTurnsExist() {
+        // Single assistant turn that only read from cache (no creation tokens).
+        let t = Turn(
+            requestId: "r", sessionId: "s",
+            timestamp: Date(timeIntervalSince1970: 1000),
+            model: "claude-opus-4-6",
+            inputTokens: 5, cacheCreation5mTokens: 0, cacheCreation1hTokens: 0,
+            cacheReadTokens: 5_000, outputTokens: 3,
+            stopReason: "end_turn", isSubagent: false
+        )
+        let c = Conversation(
+            id: "s", projectName: "/x",
+            filePath: URL(fileURLWithPath: "/tmp/x.jsonl"),
+            turns: [t], ttlSeconds: 300
+        )
+        XCTAssertNil(c.observedTTLSeconds)
+    }
+
     // MARK: - filtered(toMonth:)
 
     private func la_cal() -> Calendar {

@@ -90,6 +90,20 @@ struct Conversation: Identifiable, Equatable {
         lastTurnTimestamp ?? .distantPast
     }
 
+    /// TTL of the most recent assistant turn that wrote to the cache
+    /// (`.ephemeral_5m_input_tokens` → 300s, `.ephemeral_1h_input_tokens` → 3600s).
+    /// Walks turns newest-first to tolerate occasional no-cache turns without
+    /// losing the established TTL. Nil only when no turn in the session has
+    /// ever written to the cache — represented as `.new` in `cacheStatus`.
+    var observedTTLSeconds: TimeInterval? {
+        let sortedDesc = turns.sorted(by: { $0.timestamp > $1.timestamp })
+        for t in sortedDesc {
+            if t.cacheCreation1hTokens > 0 { return 3600 }
+            if t.cacheCreation5mTokens > 0 { return 300 }
+        }
+        return nil
+    }
+
     func cacheTTLRemaining(at now: Date) -> TimeInterval {
         guard let last = lastTurnTimestamp else { return 0 }
         let elapsed = now.timeIntervalSince(last)
