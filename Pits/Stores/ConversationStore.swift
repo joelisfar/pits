@@ -245,6 +245,24 @@ final class ConversationStore: ObservableObject {
         chimeCutoff = date
     }
 
+    func setOpenSessionIdsForTesting(_ ids: Set<String>) {
+        openSessionIds = ids
+    }
+
+    /// Synchronously runs one cache-timer tick. Tests use this to drive
+    /// transitionedToCold / oneMinuteWarning / fifteenSecondWarning events
+    /// without scheduling a real Timer.
+    func tickForTesting(at now: Date) {
+        let events = cacheTimer.tick(
+            conversations: conversations,
+            at: now,
+            openSessionIds: openSessionIds
+        )
+        for e in events {
+            handle(timerEvent: e)
+        }
+    }
+
     func snapshotStateForTesting() -> PersistedState {
         snapshotState()
     }
@@ -272,14 +290,29 @@ final class ConversationStore: ObservableObject {
                 case .title(let st): sid = st.sessionId
                 }
                 if fileBySession[sid] == nil { fileBySession[sid] = url }
-                // Chime only on *final* turns — the ones a human would notice
-                // as "Claude is done talking". Intermediate tool_use turns (and
-                // streaming fragments with no stop_reason yet) stay silent.
+                // Chime only on *final top-level* turns — the ones a human would
+                // notice as "Claude is done talking". Intermediate tool_use turns,
+                // streaming fragments with no stop_reason yet, and subagent turns
+                // (the user's not waiting on those personally) stay silent.
                 if case .turn(let t) = entry,
                    t.timestamp > chimeCutoff,
+                   !t.isSubagent,
                    let stop = t.stopReason, stop != "tool_use" {
-                    sound.playMessageReceived()
+                    sound.play(.agentTurnCompleted)
                     onNewTurn?(t)
+                }
+
+                // Cold-human-turn chime: a non-subagent human entry landing in a
+                // conversation whose cache has already gone cold. Lookup uses
+                // the *pre-ingest* `conversations` snapshot — the new human
+                // entry doesn't change cache state, only assistant turns do.
+                // Skips `.new` so a fresh conversation's first message is silent.
+                if case .human(let h) = entry,
+                   h.timestamp > chimeCutoff,
+                   !h.isSubagent,
+                   let conv = conversations.first(where: { $0.id == h.sessionId }),
+                   conv.cacheStatus(at: h.timestamp) == .cold {
+                    sound.play(.coldHumanTurn)
                 }
             }
             parser.ingest(line: line)
@@ -305,18 +338,23 @@ final class ConversationStore: ObservableObject {
             at: Date(),
             openSessionIds: openSessionIds
         )
-        for e in events {
-            switch e {
-            case .oneMinuteWarning:
-                sound.playOneMinuteWarning()
-            case .transitionedToCold:
-                // Derived values recompute on the next UI tick via
-                // TimelineView — no snapshot rebuild required.
-                break
-            }
-        }
+        for e in events { handle(timerEvent: e) }
         // Force a publish so SwiftUI pulls the latest `conversations` snapshot
         // and any subscribers (like TimelineView consumers) reflect new state.
         objectWillChange.send()
+    }
+
+    private func handle(timerEvent e: CacheTimerEvent) {
+        switch e {
+        case .oneMinuteWarning:
+            sound.play(.oneMinuteUntilCold)
+        case .transitionedToCold:
+            // Cache just expired — chime so the user knows the next message
+            // starts fresh. Derived values recompute on the next UI tick via
+            // TimelineView, so no snapshot rebuild is needed.
+            sound.play(.newCold)
+        case .fifteenSecondWarning:
+            sound.play(.fifteenSecondsUntilCold)
+        }
     }
 }

@@ -17,6 +17,35 @@ final class ConversationStoreTests: XCTestCase {
         )
     }
 
+    /// JSONL timestamps require fractional seconds (see JSONLDecoder).
+    private let isoFormatter: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return f
+    }()
+
+    /// Variant of makeStore that captures every sound name the SoundManager plays.
+    private func makeStoreCapturingSounds(
+        openSessionsWatcher: OpenSessionsWatcher = OpenSessionsWatcher(
+            sessionsDirectory: URL(fileURLWithPath: "/nonexistent/sessions")
+        )
+    ) -> (ConversationStore, () -> [String]) {
+        let played = NSMutableArray()
+        let suite = "net.farriswheel.Pits.test-\(UUID().uuidString)"
+        let testDefaults = UserDefaults(suiteName: suite)!
+        let sound = SoundManager(
+            defaults: testDefaults,
+            availableSounds: ["Boop", "Breeze", "Sonumi", "Submerge", "Tink"],
+            player: { name in played.add(name) }
+        )
+        let store = ConversationStore(
+            rootDirectory: URL(fileURLWithPath: "/nonexistent"),
+            sound: sound,
+            openSessionsWatcher: openSessionsWatcher
+        )
+        return (store, { played.compactMap { $0 as? String } })
+    }
+
     // MARK: - Open sessions wiring
 
     func test_refreshOpenSessionIds_reflectsWatcherDirectoryContents() throws {
@@ -97,6 +126,21 @@ final class ConversationStoreTests: XCTestCase {
         XCTAssertEqual(chimedRequestIds, ["r_end", "r_max"])
     }
 
+    func test_chime_skipsSubagentFinalTurns() {
+        var chimedRequestIds: [String] = []
+        let store = makeStore()
+        store.setChimeCutoffForTesting(.distantPast)
+        store.onNewTurn = { t in chimedRequestIds.append(t.requestId) }
+
+        let url = URL(fileURLWithPath: "/tmp/-a/a.jsonl")
+        // Top-level end_turn — chimes.
+        store.ingestForTesting(url: url, line: #"{"type":"assistant","sessionId":"s","requestId":"r_top","timestamp":"2026-04-21T10:00:00.000Z","message":{"model":"claude-opus-4-6","stop_reason":"end_turn","usage":{"input_tokens":1,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":1}}}"#)
+        // Subagent end_turn (presence of agentId marks it subagent) — must NOT chime.
+        store.ingestForTesting(url: url, line: #"{"type":"assistant","sessionId":"s","requestId":"r_sub","agentId":"agent-7","timestamp":"2026-04-21T10:00:01.000Z","message":{"model":"claude-opus-4-6","stop_reason":"end_turn","usage":{"input_tokens":1,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":1}}}"#)
+
+        XCTAssertEqual(chimedRequestIds, ["r_top"])
+    }
+
     func test_noChimeFiresBeforeStart() {
         // Chime cutoff is `.distantFuture` until start(); tests never reach start(),
         // so even though ingestForTesting feeds a "new" turn, the silent player
@@ -154,5 +198,118 @@ final class ConversationStoreTests: XCTestCase {
         // Should not crash or change state.
         store.setSelectedMonth(m)
         XCTAssertEqual(store.selectedMonth, m)
+    }
+
+    // MARK: - Cache timer chime
+
+    func test_tick_playsNewCold_whenConversationTransitions() {
+        let (store, played) = makeStoreCapturingSounds()
+        store.setChimeCutoffForTesting(.distantPast)
+
+        // Ingest a single warm assistant turn so the conversation is tracked.
+        let url = URL(fileURLWithPath: "/tmp/-a/a.jsonl")
+        // Pick a recent timestamp so cacheStatus computes meaningfully.
+        let now = Date()
+        let lineTs = isoFormatter.string(from: now)
+        store.ingestForTesting(url: url, line: #"{"type":"assistant","sessionId":"s","requestId":"r","timestamp":"\#(lineTs)","message":{"model":"claude-opus-4-6","stop_reason":"end_turn","usage":{"input_tokens":1,"cache_creation_input_tokens":1000,"cache_read_input_tokens":0,"output_tokens":1}}}"#)
+
+        // CacheTimer needs two ticks to fire transitionedToCold: the first tick
+        // records the initial warm state; the second detects the warm → cold
+        // transition. Tick at "now" (warm), then at "now + 6 minutes" (cold).
+        store.tickForTesting(at: now)
+        store.tickForTesting(at: now.addingTimeInterval(360))
+
+        XCTAssertTrue(played().contains("Submerge"),
+                      "expected Submerge (newCold default in test universe), got \(played())")
+    }
+
+    func test_tick_playsFifteenSecondWarning() {
+        let (store, played) = makeStoreCapturingSounds()
+        store.setChimeCutoffForTesting(.distantPast)
+
+        // Assistant turn from 200s ago → 100s remaining (warm, outside both
+        // warning windows). CacheTimer needs a first-tick baseline outside
+        // the window so the second tick can detect entry into the window.
+        let now = Date()
+        let lineTs = isoFormatter.string(from: now.addingTimeInterval(-200))
+        let url = URL(fileURLWithPath: "/tmp/-a/a.jsonl")
+        store.ingestForTesting(url: url, line: #"{"type":"assistant","sessionId":"s","requestId":"r","timestamp":"\#(lineTs)","message":{"model":"claude-opus-4-6","stop_reason":"end_turn","usage":{"input_tokens":1,"cache_creation_input_tokens":1000,"cache_read_input_tokens":0,"output_tokens":1}}}"#)
+
+        // Session must be open for warnings to fire; setOpenSessionIdsForTesting
+        // is added alongside the chime wiring in step 3.
+        store.setOpenSessionIdsForTesting(["s"])
+        // Baseline tick: 100s remaining — warm, outside 60s and 15s windows.
+        store.tickForTesting(at: now)
+        // Cross into the 15s window: remaining = 300 - (200 + 86) = 14s.
+        // Don't "simplify" 86 → 85: ISO8601 ms-rounding of `lineTs` shifts the
+        // parsed `last` by ~0.5ms, landing remaining at ~15.0005s, which fails
+        // CacheTimer's strict `remaining <= 15` predicate. 86 → 14s is safe.
+        // Both oneMinuteWarning and fifteenSecondWarning fire in the same tick
+        // (we crossed both thresholds in one jump); the 15s warning is what
+        // this test asserts on.
+        store.tickForTesting(at: now.addingTimeInterval(86))
+
+        XCTAssertTrue(played().contains("Sonumi"),
+                      "expected Sonumi (15s default in test universe), got \(played())")
+    }
+
+    // MARK: - Cold-human-turn chime
+
+    func test_coldHumanTurn_playsChime_whenConversationIsCold() {
+        let (store, played) = makeStoreCapturingSounds()
+        store.setChimeCutoffForTesting(.distantPast)
+
+        // Step 1: ingest a stale assistant turn so the conversation exists with an
+        // observed TTL. Use a far-past timestamp so it's already cold.
+        let url = URL(fileURLWithPath: "/tmp/-a/a.jsonl")
+        store.ingestForTesting(url: url, line: #"{"type":"assistant","sessionId":"s","requestId":"r","timestamp":"2026-04-21T10:00:00.000Z","message":{"model":"claude-opus-4-6","stop_reason":"end_turn","usage":{"input_tokens":1,"cache_creation_input_tokens":1000,"cache_read_input_tokens":0,"output_tokens":1}}}"#)
+
+        // Sanity: conversation has an observed TTL (5m write tokens present).
+        XCTAssertNotNil(store.conversations.first?.observedTTLSeconds)
+
+        // Step 2: ingest a non-subagent human turn well after the TTL expired.
+        store.ingestForTesting(url: url, line: #"{"type":"user","sessionId":"s","timestamp":"2026-04-22T10:00:00.000Z","message":{"role":"user","content":"hello again"}}"#)
+
+        XCTAssertTrue(played().contains("Tink"),
+                      "expected Tink (coldHumanTurn default in test universe), got \(played())")
+    }
+
+    func test_coldHumanTurn_silent_whenConversationIsWarm() {
+        let (store, played) = makeStoreCapturingSounds()
+        store.setChimeCutoffForTesting(.distantPast)
+
+        let url = URL(fileURLWithPath: "/tmp/-a/a.jsonl")
+        // Recent assistant turn → still warm.
+        let now = Date()
+        let recentTs = isoFormatter.string(from: now.addingTimeInterval(-30))
+        let humanTs = isoFormatter.string(from: now)
+        store.ingestForTesting(url: url, line: #"{"type":"assistant","sessionId":"s","requestId":"r","timestamp":"\#(recentTs)","message":{"model":"claude-opus-4-6","stop_reason":"end_turn","usage":{"input_tokens":1,"cache_creation_input_tokens":1000,"cache_read_input_tokens":0,"output_tokens":1}}}"#)
+        store.ingestForTesting(url: url, line: #"{"type":"user","sessionId":"s","timestamp":"\#(humanTs)","message":{"role":"user","content":"hi"}}"#)
+
+        XCTAssertFalse(played().contains("Tink"), "warm conv should not chime, got \(played())")
+    }
+
+    func test_coldHumanTurn_silent_whenConversationIsNew() {
+        let (store, played) = makeStoreCapturingSounds()
+        store.setChimeCutoffForTesting(.distantPast)
+
+        // No assistant turn yet → cacheStatus == .new → no chime.
+        let url = URL(fileURLWithPath: "/tmp/-a/a.jsonl")
+        store.ingestForTesting(url: url, line: #"{"type":"user","sessionId":"s","timestamp":"2026-04-22T10:00:00.000Z","message":{"role":"user","content":"first message"}}"#)
+
+        XCTAssertFalse(played().contains("Tink"), "new conv should not chime, got \(played())")
+    }
+
+    func test_coldHumanTurn_silent_forSubagentHumans() {
+        let (store, played) = makeStoreCapturingSounds()
+        store.setChimeCutoffForTesting(.distantPast)
+
+        let url = URL(fileURLWithPath: "/tmp/-a/a.jsonl")
+        // Stale assistant turn → cold.
+        store.ingestForTesting(url: url, line: #"{"type":"assistant","sessionId":"s","requestId":"r","timestamp":"2026-04-21T10:00:00.000Z","message":{"model":"claude-opus-4-6","stop_reason":"end_turn","usage":{"input_tokens":1,"cache_creation_input_tokens":1000,"cache_read_input_tokens":0,"output_tokens":1}}}"#)
+        // Subagent human (agentId present) → must NOT chime.
+        store.ingestForTesting(url: url, line: #"{"type":"user","sessionId":"s","agentId":"agent-7","timestamp":"2026-04-22T10:00:00.000Z","message":{"role":"user","content":"subagent prompt"}}"#)
+
+        XCTAssertFalse(played().contains("Tink"), "subagent human should not chime, got \(played())")
     }
 }

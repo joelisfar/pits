@@ -120,4 +120,56 @@ final class CacheTimerTests: XCTestCase {
         let events = timer.tick(conversations: convs, at: Date(timeIntervalSince1970: 1255), openSessionIds: ["s"])
         XCTAssertTrue(events.isEmpty)
     }
+
+    func test_tick_emitsFifteenSecondWarning_onceOnly() {
+        let timer = CacheTimer()
+        let convs = [conversation(id: "s", lastResponse: 1000, ttl: 300)]
+
+        // 16 seconds remaining: no 15s warning yet.
+        let events1 = timer.tick(conversations: convs, at: Date(timeIntervalSince1970: 1284), openSessionIds: ["s"])
+        XCTAssertFalse(events1.contains(.fifteenSecondWarning("s")), "got: \(events1)")
+
+        // 14 seconds remaining: warning fires.
+        let events2 = timer.tick(conversations: convs, at: Date(timeIntervalSince1970: 1286), openSessionIds: ["s"])
+        XCTAssertTrue(events2.contains(.fifteenSecondWarning("s")), "got: \(events2)")
+
+        // Subsequent ticks in the warning window: no repeat.
+        let events3 = timer.tick(conversations: convs, at: Date(timeIntervalSince1970: 1290), openSessionIds: ["s"])
+        XCTAssertFalse(events3.contains(.fifteenSecondWarning("s")), "got: \(events3)")
+    }
+
+    func test_tick_suppressesFifteenSecondWarning_whenSessionNotOpen() {
+        let timer = CacheTimer()
+        let convs = [conversation(id: "s", lastResponse: 1000, ttl: 300)]
+        // Establish state outside both warning windows.
+        _ = timer.tick(conversations: convs, at: Date(timeIntervalSince1970: 1100), openSessionIds: [])
+        // Cross into 15s window with session closed.
+        let events = timer.tick(conversations: convs, at: Date(timeIntervalSince1970: 1289), openSessionIds: [])
+        XCTAssertFalse(events.contains(.fifteenSecondWarning("s")), "got: \(events)")
+    }
+
+    func test_tick_suppressesFifteenSecondWarning_onFirstObservation_whenAlreadyInWindow() {
+        let timer = CacheTimer()
+        let convs = [conversation(id: "s", lastResponse: 1000, ttl: 300)]
+        // First observation already inside the 15s window.
+        _ = timer.tick(conversations: convs, at: Date(timeIntervalSince1970: 1289), openSessionIds: [])
+        // Reopen later, still inside: no warning.
+        let events = timer.tick(conversations: convs, at: Date(timeIntervalSince1970: 1292), openSessionIds: ["s"])
+        XCTAssertFalse(events.contains(.fifteenSecondWarning("s")), "got: \(events)")
+    }
+
+    func test_warmAfterNewTurn_resetsFifteenSecondWarning() {
+        let timer = CacheTimer()
+        var convs = [conversation(id: "s", lastResponse: 1000, ttl: 300)]
+        // Fire and consume the 15s warning.
+        _ = timer.tick(conversations: convs, at: Date(timeIntervalSince1970: 1100), openSessionIds: ["s"])
+        _ = timer.tick(conversations: convs, at: Date(timeIntervalSince1970: 1289), openSessionIds: ["s"])
+        // New assistant reply at ts=1500 — cache warmed again.
+        convs = [conversation(id: "s", lastResponse: 1500, ttl: 300)]
+        // Tick well outside warning window first to refresh state.
+        _ = timer.tick(conversations: convs, at: Date(timeIntervalSince1970: 1550), openSessionIds: ["s"])
+        // Cross into 15s window of the *new* warm period.
+        let events = timer.tick(conversations: convs, at: Date(timeIntervalSince1970: 1789), openSessionIds: ["s"])
+        XCTAssertTrue(events.contains(.fifteenSecondWarning("s")), "got: \(events)")
+    }
 }
