@@ -97,6 +97,21 @@ final class ConversationStoreTests: XCTestCase {
         XCTAssertEqual(chimedRequestIds, ["r_end", "r_max"])
     }
 
+    func test_chime_skipsSubagentFinalTurns() {
+        var chimedRequestIds: [String] = []
+        let store = makeStore()
+        store.setChimeCutoffForTesting(.distantPast)
+        store.onNewTurn = { t in chimedRequestIds.append(t.requestId) }
+
+        let url = URL(fileURLWithPath: "/tmp/-a/a.jsonl")
+        // Top-level end_turn — chimes.
+        store.ingestForTesting(url: url, line: #"{"type":"assistant","sessionId":"s","requestId":"r_top","timestamp":"2026-04-21T10:00:00.000Z","message":{"model":"claude-opus-4-6","stop_reason":"end_turn","usage":{"input_tokens":1,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":1}}}"#)
+        // Subagent end_turn (presence of agentId marks it subagent) — must NOT chime.
+        store.ingestForTesting(url: url, line: #"{"type":"assistant","sessionId":"s","requestId":"r_sub","agentId":"agent-7","timestamp":"2026-04-21T10:00:01.000Z","message":{"model":"claude-opus-4-6","stop_reason":"end_turn","usage":{"input_tokens":1,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":1}}}"#)
+
+        XCTAssertEqual(chimedRequestIds, ["r_top"])
+    }
+
     func test_noChimeFiresBeforeStart() {
         // Chime cutoff is `.distantFuture` until start(); tests never reach start(),
         // so even though ingestForTesting feeds a "new" turn, the silent player

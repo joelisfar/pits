@@ -272,11 +272,13 @@ final class ConversationStore: ObservableObject {
                 case .title(let st): sid = st.sessionId
                 }
                 if fileBySession[sid] == nil { fileBySession[sid] = url }
-                // Chime only on *final* turns — the ones a human would notice
-                // as "Claude is done talking". Intermediate tool_use turns (and
-                // streaming fragments with no stop_reason yet) stay silent.
+                // Chime only on *final top-level* turns — the ones a human would
+                // notice as "Claude is done talking". Intermediate tool_use turns,
+                // streaming fragments with no stop_reason yet, and subagent turns
+                // (the user's not waiting on those personally) stay silent.
                 if case .turn(let t) = entry,
                    t.timestamp > chimeCutoff,
+                   !t.isSubagent,
                    let stop = t.stopReason, stop != "tool_use" {
                     sound.playMessageReceived()
                     onNewTurn?(t)
