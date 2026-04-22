@@ -241,6 +241,9 @@ final class ConversationStoreTests: XCTestCase {
         // Baseline tick: 100s remaining — warm, outside 60s and 15s windows.
         store.tickForTesting(at: now)
         // Cross into the 15s window: remaining = 300 - (200 + 86) = 14s.
+        // Don't "simplify" 86 → 85: ISO8601 ms-rounding of `lineTs` shifts the
+        // parsed `last` by ~0.5ms, landing remaining at ~15.0005s, which fails
+        // CacheTimer's strict `remaining <= 15` predicate. 86 → 14s is safe.
         // Both oneMinuteWarning and fifteenSecondWarning fire in the same tick
         // (we crossed both thresholds in one jump); the 15s warning is what
         // this test asserts on.
