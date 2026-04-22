@@ -9,7 +9,7 @@ final class ConversationStore: ObservableObject {
     /// a loading state instead of the "no conversations" empty view.
     @Published private(set) var isLoading: Bool = false
     /// How many days back we've loaded (1 = today only). `loadMoreDays()`
-    /// bumps this; the watcher's `minMtime` is derived from it.
+    /// bumps this; the watcher's mtime range is derived from it.
     @Published private(set) var daysLoaded: Int
     /// Number of additional one-day chunks still queued for progressive load.
     /// Drives the chain of loads that runs each day sequentially so the UI
@@ -127,7 +127,7 @@ final class ConversationStore: ObservableObject {
         // chain. Warm launch: daysLoaded already reflects the user's loaded
         // window — just reconcile once.
         pendingLoadDays = (daysLoaded == 1) ? 6 : 0
-        watcher.minMtime = Self.cutoffDate(daysBack: daysLoaded)
+        watcher.mtimeRange = Self.cutoffDate(daysBack: daysLoaded)..<Date.distantFuture
         // Start live watching + the 1 Hz timer on main — both are non-blocking.
         watcher.start()
         startTimer()
@@ -152,7 +152,7 @@ final class ConversationStore: ObservableObject {
     /// Called recursively via `onRescanComplete` while `pendingLoadDays > 0`.
     private func runOneDayChunk() {
         daysLoaded += 1
-        watcher.minMtime = Self.cutoffDate(daysBack: daysLoaded)
+        watcher.mtimeRange = Self.cutoffDate(daysBack: daysLoaded)..<Date.distantFuture
         let w = watcher
         DispatchQueue.global(qos: .userInitiated).async {
             w.backfill()
@@ -231,7 +231,7 @@ final class ConversationStore: ObservableObject {
     /// pass without touching FSEvents or async dispatch.
     func reconcileForTesting() {
         chimeCutoff = Date()
-        watcher.minMtime = Self.cutoffDate(daysBack: max(1, daysLoaded))
+        watcher.mtimeRange = Self.cutoffDate(daysBack: max(1, daysLoaded))..<Date.distantFuture
         watcher.backfill()
         // Drain any onLines blocks the watcher dispatched to main.
         RunLoop.main.run(until: Date().addingTimeInterval(0.05))

@@ -12,13 +12,13 @@ final class LogWatcher {
     private var stream: FSEventStreamRef?
     private let queue = DispatchQueue(label: "net.farriswheel.Pits.LogWatcher")
 
-    /// When set, `discoverFiles()` only returns JSONL files whose modification
-    /// time is at or after this date. Use this to limit initial backfill to a
-    /// recent window. Thread-safe: always read/written on `queue`.
-    private var _minMtime: Date?
-    var minMtime: Date? {
-        get { queue.sync { _minMtime } }
-        set { queue.sync { _minMtime = newValue } }
+    /// When set, `discoverFiles()` only returns JSONL files whose mtime falls
+    /// in the half-open range. Files we've already started reading are kept
+    /// regardless so live appends aren't lost. Thread-safe: read/written on `queue`.
+    private var _mtimeRange: Range<Date>?
+    var mtimeRange: Range<Date>? {
+        get { queue.sync { _mtimeRange } }
+        set { queue.sync { _mtimeRange = newValue } }
     }
 
     /// Invoked on the LogWatcher's internal serial queue once per
@@ -147,17 +147,16 @@ final class LogWatcher {
         // match URLs they construct from the same rootDirectory.
         let resolvedRoot = rootDirectory.resolvingSymlinksInPath().path
         let configuredRoot = rootDirectory.path
-        let cutoff = _minMtime
+        let range = _mtimeRange
 
         var results: [URL] = []
         for case let url as URL in enumerator {
             guard url.pathExtension == "jsonl" else { continue }
-            if let cutoff {
-                // A file stays in the result set if (a) its mtime is at/after
-                // the cutoff, OR (b) we've already read bytes from it (so we
-                // need to keep tracking for further appends). The latter
-                // avoids losing live updates on an older file that has just
-                // been appended to.
+            if let range {
+                // A file stays in the result set if (a) its mtime is in range,
+                // OR (b) we've already read bytes from it (so we keep tracking
+                // it for further appends). The latter avoids losing live
+                // updates on a file we've already begun ingesting.
                 let resolvedForOffsetLookup = url.resolvingSymlinksInPath().path
                 let reboasedForOffsetLookup: URL
                 if resolvedForOffsetLookup.hasPrefix(resolvedRoot + "/") {
@@ -170,7 +169,7 @@ final class LogWatcher {
                 if !alreadyTracked {
                     let mtime = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?
                         .contentModificationDate
-                    if let mtime, mtime < cutoff { continue }
+                    if let mtime, !range.contains(mtime) { continue }
                 }
             }
             let resolvedPath = url.resolvingSymlinksInPath().path

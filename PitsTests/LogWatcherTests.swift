@@ -111,6 +111,53 @@ final class LogWatcherTests: XCTestCase {
         XCTAssertEqual(received, ["hello"])
     }
 
+    func test_backfill_skipsFilesAboveMaxMtime() throws {
+        let project = tmpDir.appendingPathComponent("-tmp-future")
+        try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
+        let url = project.appendingPathComponent("future.jsonl")
+        try "line\n".write(to: url, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes(
+            [.modificationDate: Date(timeIntervalSinceNow: 86_400 * 30)],
+            ofItemAtPath: url.path
+        )
+        var captured: [String] = []
+        let watcher = LogWatcher(rootDirectory: tmpDir)
+        watcher.onLines = { _, lines in captured.append(contentsOf: lines) }
+        watcher.mtimeRange = Date(timeIntervalSinceNow: -86_400)..<Date()
+        watcher.backfill()
+        XCTAssertTrue(captured.isEmpty, "file with mtime above range upper bound should be skipped")
+    }
+
+    func test_backfill_skipsFilesBelowMinMtime_viaRange() throws {
+        let project = tmpDir.appendingPathComponent("-tmp-ancient")
+        try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
+        let url = project.appendingPathComponent("ancient.jsonl")
+        try "line\n".write(to: url, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes(
+            [.modificationDate: Date(timeIntervalSince1970: 0)],
+            ofItemAtPath: url.path
+        )
+        var captured: [String] = []
+        let watcher = LogWatcher(rootDirectory: tmpDir)
+        watcher.onLines = { _, lines in captured.append(contentsOf: lines) }
+        watcher.mtimeRange = Date(timeIntervalSinceNow: -86_400)..<Date(timeIntervalSinceNow: 86_400)
+        watcher.backfill()
+        XCTAssertTrue(captured.isEmpty, "file with mtime below range lower bound should be skipped")
+    }
+
+    func test_backfill_includesFilesInsideRange() throws {
+        let project = tmpDir.appendingPathComponent("-tmp-recent")
+        try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
+        let url = project.appendingPathComponent("recent.jsonl")
+        try "line\n".write(to: url, atomically: true, encoding: .utf8)
+        var captured: [String] = []
+        let watcher = LogWatcher(rootDirectory: tmpDir)
+        watcher.onLines = { _, lines in captured.append(contentsOf: lines) }
+        watcher.mtimeRange = Date(timeIntervalSinceNow: -86_400)..<Date(timeIntervalSinceNow: 86_400)
+        watcher.backfill()
+        XCTAssertEqual(captured, ["line"])
+    }
+
     func test_liveStart_emitsLineOnAppend() throws {
         let project = tmpDir.appendingPathComponent("-tmp-live")
         try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
