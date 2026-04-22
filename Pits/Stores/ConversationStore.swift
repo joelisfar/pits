@@ -336,6 +336,9 @@ final class ConversationStore: ObservableObject {
             // starts fresh. Derived values recompute on the next UI tick via
             // TimelineView, so no snapshot rebuild is needed.
             sound.play(.newCold)
+        case .fifteenSecondWarning:
+            // Task 7 wires the chime.
+            break
         }
     }
 }
