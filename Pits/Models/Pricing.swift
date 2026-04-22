@@ -7,7 +7,7 @@ import Foundation
 ///  - 1-hour cache write:   2.00x
 ///  - cache read:           0.10x
 enum Pricing {
-    struct Rates: Equatable {
+    struct Rates: Equatable, Codable {
         let base: Double         // input_tokens (no cache)
         let cacheWrite5m: Double // cache_creation.ephemeral_5m_input_tokens
         let cacheWrite1h: Double // cache_creation.ephemeral_1h_input_tokens
@@ -25,7 +25,10 @@ enum Pricing {
         )
     }
 
-    static let table: [String: Rates] = [
+    /// Bundled fallback. Used when the LiteLLM fetch fails or for models the
+    /// upstream JSON doesn't list. `RemotePricing` overlays fetched values
+    /// onto this at app launch.
+    static let bundledTable: [String: Rates] = [
         "claude-opus-4-7":   rates(input: 5.00,  output: 25.00),
         "claude-opus-4-6":   rates(input: 5.00,  output: 25.00),
         "claude-opus-4-5":   rates(input: 5.00,  output: 25.00),
@@ -36,6 +39,23 @@ enum Pricing {
         "claude-haiku-4-5":  rates(input: 1.00,  output: 5.00),
         "claude-haiku-3-5":  Rates(base: 0.80, cacheWrite5m: 1.00, cacheWrite1h: 1.60, cacheRead: 0.08, output: 4.00),
     ]
+
+    /// Live table — starts as `bundledTable` and is overlay-updated by
+    /// `RemotePricing` at app launch (and again when the cache expires).
+    private(set) static var table: [String: Rates] = bundledTable
+
+    /// Overlay fetched rates onto `table`. Existing entries we don't have a
+    /// fetched rate for are preserved.
+    static func overlay(_ fetched: [String: Rates]) {
+        for (model, rate) in fetched {
+            table[model] = rate
+        }
+    }
+
+    /// Replace the entire table. Used by tests to restore state.
+    static func replaceTable(with newTable: [String: Rates]) {
+        table = newTable
+    }
 
     /// Strip trailing `-YYYYMMDD` date suffix. Returns nil for synthetic names like `<synthetic>`.
     static func normalizeModel(_ raw: String) -> String? {
