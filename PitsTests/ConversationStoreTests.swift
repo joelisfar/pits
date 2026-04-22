@@ -17,6 +17,35 @@ final class ConversationStoreTests: XCTestCase {
         )
     }
 
+    /// JSONL timestamps require fractional seconds (see JSONLDecoder).
+    private let isoFormatter: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return f
+    }()
+
+    /// Variant of makeStore that captures every sound name the SoundManager plays.
+    private func makeStoreCapturingSounds(
+        openSessionsWatcher: OpenSessionsWatcher = OpenSessionsWatcher(
+            sessionsDirectory: URL(fileURLWithPath: "/nonexistent/sessions")
+        )
+    ) -> (ConversationStore, () -> [String]) {
+        let played = NSMutableArray()
+        let suite = "net.farriswheel.Pits.test-\(UUID().uuidString)"
+        let testDefaults = UserDefaults(suiteName: suite)!
+        let sound = SoundManager(
+            defaults: testDefaults,
+            availableSounds: ["Boop", "Breeze", "Sonumi", "Submerge", "Tink"],
+            player: { name in played.add(name) }
+        )
+        let store = ConversationStore(
+            rootDirectory: URL(fileURLWithPath: "/nonexistent"),
+            sound: sound,
+            openSessionsWatcher: openSessionsWatcher
+        )
+        return (store, { played.compactMap { $0 as? String } })
+    }
+
     // MARK: - Open sessions wiring
 
     func test_refreshOpenSessionIds_reflectsWatcherDirectoryContents() throws {
@@ -169,5 +198,28 @@ final class ConversationStoreTests: XCTestCase {
         // Should not crash or change state.
         store.setSelectedMonth(m)
         XCTAssertEqual(store.selectedMonth, m)
+    }
+
+    // MARK: - Cache timer chime
+
+    func test_tick_playsNewCold_whenConversationTransitions() {
+        let (store, played) = makeStoreCapturingSounds()
+        store.setChimeCutoffForTesting(.distantPast)
+
+        // Ingest a single warm assistant turn so the conversation is tracked.
+        let url = URL(fileURLWithPath: "/tmp/-a/a.jsonl")
+        // Pick a recent timestamp so cacheStatus computes meaningfully.
+        let now = Date()
+        let lineTs = isoFormatter.string(from: now)
+        store.ingestForTesting(url: url, line: #"{"type":"assistant","sessionId":"s","requestId":"r","timestamp":"\#(lineTs)","message":{"model":"claude-opus-4-6","stop_reason":"end_turn","usage":{"input_tokens":1,"cache_creation_input_tokens":1000,"cache_read_input_tokens":0,"output_tokens":1}}}"#)
+
+        // CacheTimer needs two ticks to fire transitionedToCold: the first tick
+        // records the initial warm state; the second detects the warm → cold
+        // transition. Tick at "now" (warm), then at "now + 6 minutes" (cold).
+        store.tickForTesting(at: now)
+        store.tickForTesting(at: now.addingTimeInterval(360))
+
+        XCTAssertTrue(played().contains("Submerge"),
+                      "expected Submerge (newCold default in test universe), got \(played())")
     }
 }

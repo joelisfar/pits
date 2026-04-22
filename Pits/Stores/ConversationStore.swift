@@ -245,6 +245,20 @@ final class ConversationStore: ObservableObject {
         chimeCutoff = date
     }
 
+    /// Synchronously runs one cache-timer tick. Tests use this to drive
+    /// transitionedToCold / oneMinuteWarning / fifteenSecondWarning events
+    /// without scheduling a real Timer.
+    func tickForTesting(at now: Date) {
+        let events = cacheTimer.tick(
+            conversations: conversations,
+            at: now,
+            openSessionIds: openSessionIds
+        )
+        for e in events {
+            handle(timerEvent: e)
+        }
+    }
+
     func snapshotStateForTesting() -> PersistedState {
         snapshotState()
     }
@@ -307,18 +321,21 @@ final class ConversationStore: ObservableObject {
             at: Date(),
             openSessionIds: openSessionIds
         )
-        for e in events {
-            switch e {
-            case .oneMinuteWarning:
-                sound.play(.oneMinuteUntilCold)
-            case .transitionedToCold:
-                // Derived values recompute on the next UI tick via
-                // TimelineView — no snapshot rebuild required.
-                break
-            }
-        }
+        for e in events { handle(timerEvent: e) }
         // Force a publish so SwiftUI pulls the latest `conversations` snapshot
         // and any subscribers (like TimelineView consumers) reflect new state.
         objectWillChange.send()
+    }
+
+    private func handle(timerEvent e: CacheTimerEvent) {
+        switch e {
+        case .oneMinuteWarning:
+            sound.play(.oneMinuteUntilCold)
+        case .transitionedToCold:
+            // Cache just expired — chime so the user knows the next message
+            // starts fresh. Derived values recompute on the next UI tick via
+            // TimelineView, so no snapshot rebuild is needed.
+            sound.play(.newCold)
+        }
     }
 }
