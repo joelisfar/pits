@@ -124,7 +124,13 @@ struct ConversationRowView: View {
                     .font(.system(.body, design: .monospaced))
                     .foregroundStyle(accent)
                     .opacity(showCountdown ? 1 : 0)
-                Text(status == .warm ? "warm" : "cold")
+                Text({
+                        switch status {
+                        case .warm: return "warm"
+                        case .cold: return "cold"
+                        case .new: return "new"
+                        }
+                    }())
                     .font(.system(.caption2, design: .monospaced))
                     .foregroundStyle(.secondary)
             }
