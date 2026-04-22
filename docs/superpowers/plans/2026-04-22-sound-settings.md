@@ -1004,19 +1004,24 @@ Add to `PitsTests/ConversationStoreTests.swift`:
         let (store, played) = makeStoreCapturingSounds()
         store.setChimeCutoffForTesting(.distantPast)
 
-        // The conversation must be in `openSessionIds` for the warning to fire,
-        // but the test's OpenSessionsWatcher points at /nonexistent/sessions and
-        // returns empty. Push directly into store.openSessionIds via a helper.
-        // Existing pattern: ingest, then refreshOpenSessionIds (no-op here).
-        // For this test, use an explicit injection helper added below.
-
+        // Assistant turn from 200s ago → 100s remaining (warm, outside both
+        // warning windows). CacheTimer needs a first-tick baseline outside
+        // the window so the second tick can detect entry into the window.
         let now = Date()
-        let lineTs = isoFormatter.string(from: now.addingTimeInterval(-285))
+        let lineTs = isoFormatter.string(from: now.addingTimeInterval(-200))
         let url = URL(fileURLWithPath: "/tmp/-a/a.jsonl")
         store.ingestForTesting(url: url, line: #"{"type":"assistant","sessionId":"s","requestId":"r","timestamp":"\#(lineTs)","message":{"model":"claude-opus-4-6","stop_reason":"end_turn","usage":{"input_tokens":1,"cache_creation_input_tokens":1000,"cache_read_input_tokens":0,"output_tokens":1}}}"#)
 
+        // Session must be open for warnings to fire; setOpenSessionIdsForTesting
+        // is added alongside the chime wiring in step 3.
         store.setOpenSessionIdsForTesting(["s"])
-        store.tickForTesting(at: now) // 15s remaining (300 - 285)
+        // Baseline tick: 100s remaining — warm, outside 60s and 15s windows.
+        store.tickForTesting(at: now)
+        // Cross into the 15s window: remaining = 300 - (200 + 85) = 15s.
+        // Both oneMinuteWarning and fifteenSecondWarning fire in the same tick
+        // (we crossed both thresholds in one jump); the 15s warning is what
+        // this test asserts on.
+        store.tickForTesting(at: now.addingTimeInterval(85))
 
         XCTAssertTrue(played().contains("Sonumi"),
                       "expected Sonumi (15s default in test universe), got \(played())")
