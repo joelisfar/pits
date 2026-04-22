@@ -43,8 +43,13 @@ final class CacheTimer {
                     prev.warnedOneMinute = false
                     prev.warnedFifteenSeconds = false
                 }
-                // Transition warm → cold fires once.
-                if prev.status == .warm && status == .cold {
+                // Transition warm → cold fires once, only for open sessions.
+                // A closed tab going cold while the user isn't watching shouldn't
+                // make noise. Unlike the warning events, we don't defer-fire on
+                // reopen — by the time the user looks again, the announcement
+                // is stale ("this expired some time ago" isn't actionable).
+                if prev.status == .warm && status == .cold,
+                   openSessionIds.contains(c.id) {
                     events.append(.transitionedToCold(c.id))
                 }
                 // One-minute warning fires once per warm period, only for open sessions.
