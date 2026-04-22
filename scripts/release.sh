@@ -148,11 +148,31 @@ package_dmg() {
 }
 
 tag_and_push() {
-  echo "→ tag_and_push (stub)"
+  echo "→ tag_and_push"
+
+  # Pits.xcodeproj/ is gitignored — regenerated on demand via xcodegen.
+  git add project.yml
+  git commit -m "release: v$VERSION"
+  git tag "v$VERSION"
+
+  if ! git push origin main "v$VERSION"; then
+    die "Push failed. Recover with: git push origin main v$VERSION"
+  fi
+
+  echo "  pushed main + tag v$VERSION to origin"
 }
 
 publish() {
-  echo "→ publish (stub)"
+  echo "→ publish"
+
+  if ! gh release create "v$VERSION" \
+    --title "v$VERSION" \
+    --generate-notes \
+    "$DMG_PATH"; then
+    die "Release creation failed. Recover with: gh release create v$VERSION --generate-notes --title v$VERSION $DMG_PATH"
+  fi
+
+  echo "  https://github.com/joelisfar/pits/releases/tag/v$VERSION"
 }
 
 main() {
