@@ -124,7 +124,27 @@ build_release() {
 }
 
 package_dmg() {
-  echo "→ package_dmg (stub)"
+  echo "→ package_dmg"
+
+  local staging="build/dmg-staging"
+  rm -rf "$staging" dist
+  mkdir -p "$staging" dist
+
+  cp -R "$APP_PATH" "$staging/"
+  ln -s /Applications "$staging/Applications"
+
+  DMG_PATH="dist/Pits-$VERSION.dmg"
+  hdiutil create \
+    -volname "Pits $VERSION" \
+    -srcfolder "$staging" \
+    -ov -format UDZO \
+    "$DMG_PATH" \
+    >/dev/null
+
+  [[ -f "$DMG_PATH" ]] \
+    || die "DMG not created at $DMG_PATH"
+
+  echo "  $DMG_PATH ($(du -h "$DMG_PATH" | cut -f1))"
 }
 
 tag_and_push() {
