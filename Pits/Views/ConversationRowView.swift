@@ -57,12 +57,12 @@ struct ConversationRowView: View {
                 .frame(width: 8, height: 8)
                 .padding(.top, 5)
 
-            // Primary label: AI-generated title if present, falling back to the
-            // project path. When a title is shown, the project path sits beneath
-            // it as a dimmed subtitle.
+            // Primary label: AI-generated title if present, else the first
+            // user message (Claude Code skips title generation for slash-
+            // command openers), else the project path alone.
             VStack(alignment: .leading, spacing: 1) {
-                if let title = conversation.title {
-                    Text(title)
+                if let heading = conversation.title ?? conversation.firstMessageText {
+                    Text(heading)
                         .font(.system(.body, design: .default))
                         .fontWeight(.semibold)
                         .lineLimit(1)
@@ -85,17 +85,19 @@ struct ConversationRowView: View {
             VStack(alignment: .trailing, spacing: 2) {
                 Text(formatCost(conversation.totalCost))
                     .font(.system(.body, design: .monospaced))
-                Text("next ~\(formatCost(conversation.estimatedNextTurnCost(at: now)))")
+                Text("next turn ~\(formatCost(conversation.estimatedNextTurnCost(at: now)))")
                     .font(.system(.caption2, design: .monospaced))
                     .foregroundStyle(.secondary)
             }
 
             VStack(alignment: .trailing, spacing: 2) {
-                if status == .warm {
-                    Text(remainingText)
-                        .font(.system(.body, design: .monospaced))
-                        .foregroundStyle(accent)
-                }
+                // Always render the countdown line — opacity 0 when cold —
+                // so cold rows match warm row heights and the list doesn't
+                // reflow as sessions transition warm → cold.
+                Text(status == .warm ? remainingText : " ")
+                    .font(.system(.body, design: .monospaced))
+                    .foregroundStyle(accent)
+                    .opacity(status == .warm ? 1 : 0)
                 Text(status == .warm ? "warm" : "cold")
                     .font(.system(.caption2, design: .monospaced))
                     .foregroundStyle(.secondary)

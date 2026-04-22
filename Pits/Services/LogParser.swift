@@ -64,6 +64,16 @@ final class LogParser {
         titleBySession[sessionId]
     }
 
+    /// Chronologically first user-message preview for a session, if any of
+    /// its human turns carried one. Row-title fallback for sessions that
+    /// never received an `ai-title` event (e.g. slash-command openers).
+    func firstMessageText(sessionId: String) -> String? {
+        humanTurns(sessionId: sessionId)
+            .lazy
+            .compactMap { $0.text }
+            .first
+    }
+
     /// All session IDs currently tracked.
     func sessionIds() -> Set<String> {
         var ids = Set(turnsByRequestId.values.map(\.sessionId))

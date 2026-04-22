@@ -8,11 +8,23 @@ enum JSONLEntry {
 }
 
 /// Marker for a human turn (used by the classifier, not displayed).
+/// `text` carries a short, displayable preview of the user message — used as
+/// a row-title fallback when Claude Code never wrote an `ai-title` for the
+/// session (e.g. sessions opened with a slash command).
 struct HumanTurn: Equatable, Codable {
     let sessionId: String
     let timestamp: Date
     let isSubagent: Bool
     let agentId: String?
+    let text: String?
+
+    init(sessionId: String, timestamp: Date, isSubagent: Bool, agentId: String?, text: String? = nil) {
+        self.sessionId = sessionId
+        self.timestamp = timestamp
+        self.isSubagent = isSubagent
+        self.agentId = agentId
+        self.text = text
+    }
 }
 
 /// AI-generated session title — written as a one-shot `{"type":"ai-title",...}`
@@ -52,7 +64,8 @@ enum JSONLDecoder {
         switch type {
         case "user":
             guard isHumanTurn(obj) else { return nil }
-            return .human(HumanTurn(sessionId: sessionId, timestamp: ts, isSubagent: isSubagent, agentId: agentId))
+            let text = humanTurnPreview(obj)
+            return .human(HumanTurn(sessionId: sessionId, timestamp: ts, isSubagent: isSubagent, agentId: agentId, text: text))
 
         case "assistant":
             guard let msg = obj["message"] as? [String: Any] else { return nil }
@@ -119,5 +132,64 @@ enum JSONLDecoder {
             return hasText && !allToolResults
         }
         return false
+    }
+
+    /// Extracts a displayable preview of a user JSONL entry, or nil when the
+    /// entry is a synthetic wrapper with no human-authored content. Used as
+    /// a row-title fallback when Claude Code never emits an `ai-title` for
+    /// the session (slash-command openers are the common case).
+    ///
+    /// Rules, in order:
+    ///  - Concatenate all `{type:"text"}` blocks (or use the raw string).
+    ///  - If the concatenated text is only a `<local-command-caveat>…`
+    ///    wrapper, return nil so the caller falls through to the next turn.
+    ///  - If it contains a `<command-name>…</command-name>` tag, return just
+    ///    the command (e.g. `/context`). Slash-command openers pack the
+    ///    invocation into this tag.
+    ///  - Otherwise, strip any `<ide_*>…</ide_*>` tags that wrap IDE-
+    ///    inserted context, trim, and return — or nil if nothing remains.
+    private static func humanTurnPreview(_ obj: [String: Any]) -> String? {
+        guard let msg = obj["message"] as? [String: Any] else { return nil }
+        let content = msg["content"]
+
+        let raw: String
+        if let str = content as? String {
+            raw = str
+        } else if let arr = content as? [[String: Any]] {
+            raw = arr
+                .compactMap { ($0["type"] as? String) == "text" ? $0["text"] as? String : nil }
+                .joined(separator: "\n")
+        } else {
+            return nil
+        }
+
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty { return nil }
+
+        if trimmed.hasPrefix("<local-command-caveat>") { return nil }
+
+        if let range = trimmed.range(of: "<command-name>"),
+           let end = trimmed.range(of: "</command-name>", range: range.upperBound..<trimmed.endIndex) {
+            let cmd = trimmed[range.upperBound..<end.lowerBound].trimmingCharacters(in: .whitespacesAndNewlines)
+            if !cmd.isEmpty { return cmd }
+        }
+
+        let stripped = stripTag("ide_opened_file", from: stripTag("ide_selection", from: trimmed))
+        let final = stripped.trimmingCharacters(in: .whitespacesAndNewlines)
+        return final.isEmpty ? nil : final
+    }
+
+    /// Removes `<name>…</name>` blocks (including tags). Non-greedy so multiple
+    /// occurrences are each excised. Returns the input unchanged if the tag
+    /// never appears.
+    private static func stripTag(_ name: String, from s: String) -> String {
+        var out = s
+        let open = "<\(name)>"
+        let close = "</\(name)>"
+        while let o = out.range(of: open),
+              let c = out.range(of: close, range: o.upperBound..<out.endIndex) {
+            out.removeSubrange(o.lowerBound..<c.upperBound)
+        }
+        return out
     }
 }
