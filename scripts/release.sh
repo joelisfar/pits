@@ -72,7 +72,22 @@ $(git status --porcelain)"
 }
 
 bump_version() {
-  echo "→ bump_version (stub)"
+  echo "→ bump_version"
+
+  local current_project_version new_project_version
+  current_project_version=$(grep -E '^    CURRENT_PROJECT_VERSION:' project.yml \
+                            | sed -E 's/.*"([0-9]+)".*/\1/')
+  [[ -n "$current_project_version" ]] \
+    || die "Could not read CURRENT_PROJECT_VERSION from project.yml"
+  new_project_version=$((current_project_version + 1))
+
+  # BSD sed (macOS): -i '' for in-place with no backup.
+  sed -i '' -E "s/^(    MARKETING_VERSION: )\"[^\"]+\"/\1\"$VERSION\"/" project.yml
+  sed -i '' -E "s/^(    CURRENT_PROJECT_VERSION: )\"[^\"]+\"/\1\"$new_project_version\"/" project.yml
+
+  xcodegen generate >/dev/null
+
+  echo "  MARKETING_VERSION=$VERSION CURRENT_PROJECT_VERSION=$new_project_version"
 }
 
 build_release() {
