@@ -2,6 +2,8 @@ import Foundation
 import SwiftUI
 import Combine
 
+enum MenuBarIconState { case idle, active, warning }
+
 @MainActor
 final class ConversationStore: ObservableObject {
     @Published private(set) var conversations: [Conversation] = []
@@ -162,6 +164,24 @@ final class ConversationStore: ObservableObject {
         watcher.stop()
         tickTimer?.invalidate()
         tickTimer = nil
+    }
+
+    /// Aggregate warm/warning state across all conversations, used by the
+    /// menu bar icon. `.warning` wins over `.active`: if any warm session is
+    /// in its final minute, the icon flips red.
+    func menuBarIconState(at now: Date) -> MenuBarIconState {
+        var anyWarm = false
+        var anyWarning = false
+        for c in conversations {
+            let remaining = c.cacheTTLRemaining(at: now)
+            if remaining > 0 {
+                anyWarm = true
+                if remaining <= 60 { anyWarning = true }
+            }
+        }
+        if anyWarning { return .warning }
+        if anyWarm { return .active }
+        return .idle
     }
 
     func rebuildSnapshot() {
