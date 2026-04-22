@@ -92,8 +92,7 @@ struct Conversation: Identifiable, Equatable {
     /// losing the established TTL. Nil only when no turn in the session has
     /// ever written to the cache — represented as `.new` in `cacheStatus`.
     var observedTTLSeconds: TimeInterval? {
-        let sortedDesc = turns.sorted(by: { $0.timestamp > $1.timestamp })
-        for t in sortedDesc {
+        for t in turns.reversed() {
             if t.cacheCreation1hTokens > 0 { return 3600 }
             if t.cacheCreation5mTokens > 0 { return 300 }
         }
@@ -119,7 +118,7 @@ struct Conversation: Identifiable, Equatable {
     /// New:  no cache has been written yet; estimate with the conservative
     ///       5m write rate.
     func estimatedNextTurnCost(at now: Date) -> Double {
-        guard let last = turns.max(by: { $0.timestamp < $1.timestamp }) else { return 0 }
+        guard let last = turns.last else { return 0 }
         guard let rates = Pricing.rates(for: last.model) else { return 0 }
         let context = Double(last.contextSize)
         switch cacheStatus(at: now) {

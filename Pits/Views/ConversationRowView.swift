@@ -42,6 +42,14 @@ struct ConversationRowView: View {
         return status == .cold ? 0.65 : 1.0
     }
 
+    private var statusLabel: String {
+        switch status {
+        case .warm: return "warm"
+        case .cold: return "cold"
+        case .new: return "new"
+        }
+    }
+
     private var remainingText: String {
         let total = Int(remaining.rounded(.down))
         let m = total / 60
@@ -124,13 +132,7 @@ struct ConversationRowView: View {
                     .font(.system(.body, design: .monospaced))
                     .foregroundStyle(accent)
                     .opacity(showCountdown ? 1 : 0)
-                Text({
-                        switch status {
-                        case .warm: return "warm"
-                        case .cold: return "cold"
-                        case .new: return "new"
-                        }
-                    }())
+                Text(statusLabel)
                     .font(.system(.caption2, design: .monospaced))
                     .foregroundStyle(.secondary)
             }
