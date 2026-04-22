@@ -37,7 +37,7 @@ Add a "Smoke test / manual QA" section to `README.md` pointing at `scripts/smoke
 
 - Remove the commented-out `.swiftpm` line at `.gitignore:30`; line 70 has the active one (duplicate noise).
 - Add a one-line comment above `RunLoop.main.add(t, forMode: .common)` in `ConversationStore.startTimer()` explaining why `.common` mode matters (fires during window resize / menu tracking).
-- `Conversation.projectName(from:)` is lossy for literal-dash project paths. Either accept as v1 limitation (current) or consult the encoded path in a smarter way.
+- ~~`Conversation.projectName(from:)` is lossy for literal-dash project paths.~~ Fixed: the decoder now walks split segments against the real filesystem and merges adjacent segments whenever the candidate prefix doesn't exist on disk, so a leaf like `one-two-three` is preserved instead of truncating to `three`.
 
 ---
 
