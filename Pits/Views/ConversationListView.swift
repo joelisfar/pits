@@ -9,9 +9,6 @@ struct ConversationListView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            MonthPickerBar(store: store)
-            Divider()
-
             if visibleConversations.isEmpty {
                 if store.isLoading { loadingState } else { emptyState }
             } else {
@@ -62,6 +59,21 @@ struct ConversationListView: View {
         .background(Color(nsColor: .windowBackgroundColor))
         .onAppear { applyWindowLevel() }
         .onChange(of: alwaysOnTop) { _, _ in applyWindowLevel() }
+        .toolbar {
+            ToolbarItem(placement: .navigation) {
+                Picker("Month", selection: Binding(
+                    get: { store.selectedMonth },
+                    set: { store.setSelectedMonth($0) }
+                )) {
+                    ForEach(store.availableMonths, id: \.self) { m in
+                        Text(m.displayName()).tag(m)
+                    }
+                }
+                .pickerStyle(.menu)
+                .labelsHidden()
+                .fixedSize()
+            }
+        }
     }
 
     private func binding(for id: String) -> Binding<Bool> {
@@ -165,28 +177,6 @@ private struct DayGroup {
     let day: Date
     let conversations: [Conversation]
     var totalCost: Double { conversations.reduce(0.0) { $0 + $1.totalCost } }
-}
-
-private struct MonthPickerBar: View {
-    @ObservedObject var store: ConversationStore
-
-    var body: some View {
-        HStack(spacing: 8) {
-            Menu {
-                ForEach(store.availableMonths, id: \.self) { m in
-                    Button(m.displayName()) { store.setSelectedMonth(m) }
-                }
-            } label: {
-                Text(store.selectedMonth.displayName())
-                    .font(.caption.weight(.medium))
-            }
-            .menuStyle(.borderlessButton)
-            .fixedSize()
-            Spacer()
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 6)
-    }
 }
 
 private struct DayHeader: View {
