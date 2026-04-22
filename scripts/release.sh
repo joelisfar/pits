@@ -91,7 +91,36 @@ bump_version() {
 }
 
 build_release() {
-  echo "→ build_release (stub)"
+  echo "→ build_release (this takes ~30s on a warm cache)"
+
+  rm -rf build/release
+
+  # Capture stderr so CoreSimulator's "out of date" noise doesn't pollute the
+  # release log. Same pattern as scripts/run.sh. Only surface stderr if
+  # xcodebuild actually failed.
+  local err_log
+  err_log=$(mktemp)
+
+  if ! xcodebuild \
+    -project Pits.xcodeproj \
+    -scheme Pits \
+    -configuration Release \
+    -destination "platform=macOS,arch=$(uname -m)" \
+    -derivedDataPath build/release \
+    clean build \
+    2>"$err_log" >/dev/null; then
+    echo "✗ xcodebuild failed — stderr follows:" >&2
+    cat "$err_log" >&2
+    rm -f "$err_log"
+    die "Release build failed"
+  fi
+  rm -f "$err_log"
+
+  APP_PATH="build/release/Build/Products/Release/Pits.app"
+  [[ -d "$APP_PATH" ]] \
+    || die "Built app not found at $APP_PATH"
+
+  echo "  $APP_PATH"
 }
 
 package_dmg() {
