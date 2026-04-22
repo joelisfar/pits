@@ -252,4 +252,64 @@ final class ConversationStoreTests: XCTestCase {
         XCTAssertTrue(played().contains("Sonumi"),
                       "expected Sonumi (15s default in test universe), got \(played())")
     }
+
+    // MARK: - Cold-human-turn chime
+
+    func test_coldHumanTurn_playsChime_whenConversationIsCold() {
+        let (store, played) = makeStoreCapturingSounds()
+        store.setChimeCutoffForTesting(.distantPast)
+
+        // Step 1: ingest a stale assistant turn so the conversation exists with an
+        // observed TTL. Use a far-past timestamp so it's already cold.
+        let url = URL(fileURLWithPath: "/tmp/-a/a.jsonl")
+        store.ingestForTesting(url: url, line: #"{"type":"assistant","sessionId":"s","requestId":"r","timestamp":"2026-04-21T10:00:00.000Z","message":{"model":"claude-opus-4-6","stop_reason":"end_turn","usage":{"input_tokens":1,"cache_creation_input_tokens":1000,"cache_read_input_tokens":0,"output_tokens":1}}}"#)
+
+        // Sanity: conversation has an observed TTL (5m write tokens present).
+        XCTAssertNotNil(store.conversations.first?.observedTTLSeconds)
+
+        // Step 2: ingest a non-subagent human turn well after the TTL expired.
+        store.ingestForTesting(url: url, line: #"{"type":"user","sessionId":"s","timestamp":"2026-04-22T10:00:00.000Z","message":{"role":"user","content":"hello again"}}"#)
+
+        XCTAssertTrue(played().contains("Tink"),
+                      "expected Tink (coldHumanTurn default in test universe), got \(played())")
+    }
+
+    func test_coldHumanTurn_silent_whenConversationIsWarm() {
+        let (store, played) = makeStoreCapturingSounds()
+        store.setChimeCutoffForTesting(.distantPast)
+
+        let url = URL(fileURLWithPath: "/tmp/-a/a.jsonl")
+        // Recent assistant turn → still warm.
+        let now = Date()
+        let recentTs = isoFormatter.string(from: now.addingTimeInterval(-30))
+        let humanTs = isoFormatter.string(from: now)
+        store.ingestForTesting(url: url, line: #"{"type":"assistant","sessionId":"s","requestId":"r","timestamp":"\#(recentTs)","message":{"model":"claude-opus-4-6","stop_reason":"end_turn","usage":{"input_tokens":1,"cache_creation_input_tokens":1000,"cache_read_input_tokens":0,"output_tokens":1}}}"#)
+        store.ingestForTesting(url: url, line: #"{"type":"user","sessionId":"s","timestamp":"\#(humanTs)","message":{"role":"user","content":"hi"}}"#)
+
+        XCTAssertFalse(played().contains("Tink"), "warm conv should not chime, got \(played())")
+    }
+
+    func test_coldHumanTurn_silent_whenConversationIsNew() {
+        let (store, played) = makeStoreCapturingSounds()
+        store.setChimeCutoffForTesting(.distantPast)
+
+        // No assistant turn yet → cacheStatus == .new → no chime.
+        let url = URL(fileURLWithPath: "/tmp/-a/a.jsonl")
+        store.ingestForTesting(url: url, line: #"{"type":"user","sessionId":"s","timestamp":"2026-04-22T10:00:00.000Z","message":{"role":"user","content":"first message"}}"#)
+
+        XCTAssertFalse(played().contains("Tink"), "new conv should not chime, got \(played())")
+    }
+
+    func test_coldHumanTurn_silent_forSubagentHumans() {
+        let (store, played) = makeStoreCapturingSounds()
+        store.setChimeCutoffForTesting(.distantPast)
+
+        let url = URL(fileURLWithPath: "/tmp/-a/a.jsonl")
+        // Stale assistant turn → cold.
+        store.ingestForTesting(url: url, line: #"{"type":"assistant","sessionId":"s","requestId":"r","timestamp":"2026-04-21T10:00:00.000Z","message":{"model":"claude-opus-4-6","stop_reason":"end_turn","usage":{"input_tokens":1,"cache_creation_input_tokens":1000,"cache_read_input_tokens":0,"output_tokens":1}}}"#)
+        // Subagent human (agentId present) → must NOT chime.
+        store.ingestForTesting(url: url, line: #"{"type":"user","sessionId":"s","agentId":"agent-7","timestamp":"2026-04-22T10:00:00.000Z","message":{"role":"user","content":"subagent prompt"}}"#)
+
+        XCTAssertFalse(played().contains("Tink"), "subagent human should not chime, got \(played())")
+    }
 }

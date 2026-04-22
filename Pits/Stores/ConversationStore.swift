@@ -301,6 +301,19 @@ final class ConversationStore: ObservableObject {
                     sound.play(.agentTurnCompleted)
                     onNewTurn?(t)
                 }
+
+                // Cold-human-turn chime: a non-subagent human entry landing in a
+                // conversation whose cache has already gone cold. Lookup uses
+                // the *pre-ingest* `conversations` snapshot — the new human
+                // entry doesn't change cache state, only assistant turns do.
+                // Skips `.new` so a fresh conversation's first message is silent.
+                if case .human(let h) = entry,
+                   h.timestamp > chimeCutoff,
+                   !h.isSubagent,
+                   let conv = conversations.first(where: { $0.id == h.sessionId }),
+                   conv.cacheStatus(at: h.timestamp) == .cold {
+                    sound.play(.coldHumanTurn)
+                }
             }
             parser.ingest(line: line)
         }
