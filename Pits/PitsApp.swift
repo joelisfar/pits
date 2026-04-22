@@ -17,8 +17,9 @@ struct PitsApp: App {
         let s = ConversationStore(rootDirectory: root, ttlSeconds: ttl, cache: cache)
         _store = StateObject(wrappedValue: s)
 
-        // Save before quit — WindowGroup.onDisappear is unreliable for app
-        // termination, so we observe the canonical AppKit notification.
+        // Save before quit. With LSUIElement = true and a MenuBarExtra scene
+        // there's no window lifecycle, so willTerminate is the only reliable
+        // signal that the app is going away.
         NotificationCenter.default.addObserver(
             forName: NSApplication.willTerminateNotification,
             object: nil,
@@ -29,8 +30,9 @@ struct PitsApp: App {
     }
 
     var body: some Scene {
-        WindowGroup("Pits", id: "pits-main") {
+        MenuBarExtra("Pits", systemImage: "flame.fill") {
             ConversationListView(store: store)
+                .frame(width: 460, height: 520)
                 .onAppear {
                     // Skip starting the live watcher when running under XCTest —
                     // backfilling ~/.claude/projects/ on the main thread during
@@ -38,10 +40,8 @@ struct PitsApp: App {
                     guard ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil else { return }
                     store.start()
                 }
-                .onDisappear { store.stop() }
         }
-        .defaultSize(width: 580, height: 420)
-        .windowResizability(.contentMinSize)
+        .menuBarExtraStyle(.window)
 
         Settings {
             SettingsView(store: store)
