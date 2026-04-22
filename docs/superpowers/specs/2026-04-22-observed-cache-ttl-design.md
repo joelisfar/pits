@@ -36,15 +36,18 @@ enum CacheStatus { case new, warm, cold }
 
 ```swift
 var observedTTLSeconds: TimeInterval? {
-    guard let last = turns.max(by: { $0.timestamp < $1.timestamp }) else { return nil }
-    if last.cacheCreation1hTokens > 0 { return 3600 }
-    if last.cacheCreation5mTokens > 0 { return 300 }
+    let sortedDesc = turns.sorted(by: { $0.timestamp > $1.timestamp })
+    for turn in sortedDesc {
+        if turn.cacheCreation1hTokens > 0 { return 3600 }
+        if turn.cacheCreation5mTokens > 0 { return 300 }
+    }
     return nil
 }
 ```
 
-- Latest assistant turn wins (handles the rare 4/1063 mid-session flip cases naturally).
-- Nil when there are no assistant turns yet, or when the latest turn has no `cache_creation` tokens (defensive — does not occur in observed data).
+- We walk assistant turns newest-first and return the TTL of the first turn that actually wrote to the cache.
+- This handles the rare mid-session flip cases naturally (4/1063 sessions) and tolerates the ~0.16% of turns that carry zero `cache_creation` tokens — a prior cache-writing turn still anchors the TTL.
+- Nil only when *no* assistant turn in the session has ever written to the cache → `.new`.
 
 `cacheTTLRemaining(at:)` and `cacheStatus(at:)` use `observedTTLSeconds`:
 
@@ -109,6 +112,7 @@ New tests:
 - `.warm` — latest assistant turn has 5m tokens, last timestamp 2min ago → status is `.warm`, remaining ≈ 3min.
 - `.cold` — latest assistant turn has 5m tokens, last timestamp 10min ago → status is `.cold`.
 - Latest-turn-wins — conversation where turn 1 is 5m, turn 2 is 1h → TTL is 3600s.
+- No-cache-turn fallback — conversation where turn 1 is 1h, turn 2 has zero cache_creation tokens → TTL is still 3600s (walks back to turn 1).
 
 ## Out of scope
 
