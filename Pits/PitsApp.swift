@@ -152,7 +152,7 @@ struct PitsApp: App {
         .windowStyle(.hiddenTitleBar)
 
         Settings {
-            SettingsView(store: store)
+            SettingsView()
         }
     }
 }

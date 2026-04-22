@@ -2,7 +2,6 @@ import SwiftUI
 import ServiceManagement
 
 struct SettingsView: View {
-    @ObservedObject var store: ConversationStore
     @AppStorage(SoundManager.soundsEnabledKey) private var soundsEnabled: Bool = true
     @AppStorage("net.farriswheel.Pits.alwaysOnTop") private var alwaysOnTop: Bool = false
     @State private var launchAtLogin: Bool = (SMAppService.mainApp.status == .enabled)
