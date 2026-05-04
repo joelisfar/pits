@@ -45,21 +45,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         MenuBarRouter.shared.openMainWindow?()
     }
 
+    /// Called from PitsApp's onAppear after MenuBarRouter.shared.updater has
+    /// been set. Re-renders the status icon when updater state changes (e.g.
+    /// `updateAvailable` flipping true on `didFindValidUpdate`).
+    func subscribeToUpdater(_ updater: UpdaterModel) {
+        updater.objectWillChange
+            .sink { [weak self] in
+                Task { @MainActor in self?.refreshIcon() }
+            }
+            .store(in: &cancellables)
+        refreshIcon()
+    }
+
     private func refreshIcon() {
         guard let button = statusItem?.button else { return }
         let state = MenuBarRouter.shared.store?.menuBarIconState(at: Date()) ?? .idle
+        let updateAvailable = MenuBarRouter.shared.updater?.updateAvailable ?? false
 
         guard let base = NSImage(systemSymbolName: "flame.fill",
                                  accessibilityDescription: "Pits") else { return }
+        let baseImage: NSImage
         switch state {
         case .idle:
             base.isTemplate = true
-            button.image = base
+            baseImage = base
         case .active:
-            button.image = Self.tinted(base, color: .systemOrange)
+            baseImage = Self.tinted(base, color: .systemOrange)
         case .warning:
-            button.image = Self.tinted(base, color: .systemRed)
+            baseImage = Self.tinted(base, color: .systemRed)
         }
+
+        button.image = updateAvailable ? Self.withUpdateDot(baseImage) : baseImage
     }
 
     /// Returns a non-template copy of `image` tinted with `color` via a
@@ -70,6 +86,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let out = image.withSymbolConfiguration(config) ?? image
         out.isTemplate = false
         return out
+    }
+
+    /// Composes a small blue dot on the bottom-right of `image` to indicate an
+    /// available update. Drawn at runtime so it scales with the menu bar's
+    /// thickness preference.
+    private static func withUpdateDot(_ image: NSImage) -> NSImage {
+        let size = image.size
+        let dotDiameter = max(4, size.width * 0.32)
+        let composite = NSImage(size: size)
+        composite.lockFocus()
+        defer { composite.unlockFocus() }
+        image.draw(in: NSRect(origin: .zero, size: size))
+        NSColor.systemBlue.setFill()
+        let dotRect = NSRect(
+            x: size.width - dotDiameter,
+            y: 0,
+            width: dotDiameter,
+            height: dotDiameter
+        )
+        NSBezierPath(ovalIn: dotRect).fill()
+        composite.isTemplate = false
+        return composite
     }
 }
 
@@ -147,6 +185,9 @@ struct PitsApp: App {
                     store.start()
                     updater.attachDelegate()
                     MenuBarRouter.shared.updater = updater
+                    if let delegate = NSApp.delegate as? AppDelegate {
+                        delegate.subscribeToUpdater(updater)
+                    }
                 }
                 .onDisappear { store.stop() }
                 .background(OpenWindowInstaller())
