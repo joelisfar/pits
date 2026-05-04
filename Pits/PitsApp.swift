@@ -11,6 +11,7 @@ final class MenuBarRouter {
     static let shared = MenuBarRouter()
     weak var store: ConversationStore?
     var openMainWindow: (() -> Void)?
+    weak var updater: UpdaterModel?
 }
 
 /// Owns the menu bar `NSStatusItem`. We can't use `MenuBarExtra` here because
@@ -76,6 +77,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 struct PitsApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var store: ConversationStore
+    @StateObject private var updater = UpdaterModel()
     @AppStorage(SoundManager.soundsEnabledKey) private var soundsEnabled: Bool = true
 
     init() {
@@ -136,13 +138,15 @@ struct PitsApp: App {
         // new window each time. `Window` brings the existing instance
         // forward, which is the behavior we want.
         Window("Pits", id: "pits-main") {
-            ConversationListView(store: store)
+            ConversationListView(store: store, updater: updater)
                 .onAppear {
                     // Skip starting the live watcher when running under XCTest —
                     // backfilling ~/.claude/projects/ on the main thread during
                     // test-host launch blocks the XCTest runner attach.
                     guard ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil else { return }
                     store.start()
+                    updater.attachDelegate()
+                    MenuBarRouter.shared.updater = updater
                 }
                 .onDisappear { store.stop() }
                 .background(OpenWindowInstaller())
@@ -152,7 +156,7 @@ struct PitsApp: App {
         .windowStyle(.hiddenTitleBar)
 
         Settings {
-            SettingsView()
+            SettingsView(updater: updater)
         }
     }
 }
