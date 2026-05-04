@@ -20,9 +20,12 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: net.farriswheel.Pits
         INFOPLIST_FILE: Pits/Info.plist
-        CODE_SIGN_STYLE: Automatic
-        CODE_SIGN_IDENTITY: "-"
         ENABLE_HARDENED_RUNTIME: YES
+        CODE_SIGN_ENTITLEMENTS: Pits/Pits.entitlements
+        # Local Debug builds: ad-hoc sign so the app launches without a Developer ID cert.
+        # Release builds: CI passes CODE_SIGN_IDENTITY="Developer ID Application" + DEVELOPMENT_TEAM via xcodebuild flags.
+        CODE_SIGN_STYLE: Manual
+        CODE_SIGN_IDENTITY: "-"
   PitsTests:
     type: bundle.unit-test
     platform: macOS
