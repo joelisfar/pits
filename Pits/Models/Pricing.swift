@@ -1,4 +1,5 @@
 import Foundation
+import os
 
 /// Per-million-token pricing for Claude models, in USD.
 ///
@@ -42,19 +43,31 @@ enum Pricing {
 
     /// Live table — starts as `bundledTable` and is overlay-updated by
     /// `RemotePricing` at app launch (and again when the cache expires).
-    private(set) static var table: [String: Rates] = bundledTable
+    /// Reads (`rates(for:)`, `table`) and writes (`overlay`, `replaceTable`)
+    /// are serialized through `tableLock` so concurrent access from the
+    /// LiteLLM background fetch (MainActor.run) and the LogWatcher's
+    /// queue-isolated decode is safe regardless of how callers thread it.
+    private static let tableLock = OSAllocatedUnfairLock<[String: Rates]>(initialState: bundledTable)
+
+    /// Read-only view of the live table. Snapshots under the lock so
+    /// callers iterate a stable copy.
+    static var table: [String: Rates] {
+        tableLock.withLock { $0 }
+    }
 
     /// Overlay fetched rates onto `table`. Existing entries we don't have a
     /// fetched rate for are preserved.
     static func overlay(_ fetched: [String: Rates]) {
-        for (model, rate) in fetched {
-            table[model] = rate
+        tableLock.withLock { current in
+            for (model, rate) in fetched {
+                current[model] = rate
+            }
         }
     }
 
     /// Replace the entire table. Used by tests to restore state.
     static func replaceTable(with newTable: [String: Rates]) {
-        table = newTable
+        tableLock.withLock { $0 = newTable }
     }
 
     /// Strip trailing `-YYYYMMDD` date suffix. Returns nil for synthetic names like `<synthetic>`.
@@ -67,6 +80,6 @@ enum Pricing {
 
     /// Rates for a normalized model name, or nil if unknown.
     static func rates(for normalizedModel: String) -> Rates? {
-        table[normalizedModel]
+        tableLock.withLock { $0[normalizedModel] }
     }
 }

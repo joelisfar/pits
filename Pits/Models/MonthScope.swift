@@ -14,10 +14,15 @@ struct MonthScope: Equatable, Hashable, Codable, Comparable {
         return MonthScope(year: comps.year ?? 1970, month: comps.month ?? 1)
     }
 
-    /// Half-open `[startOfMonth, startOfNextMonth)` range.
+    /// Half-open `[startOfMonth, startOfNextMonth)` range. Falls back to a
+    /// degenerate empty range at `Date.distantPast` if `year`/`month` are
+    /// invalid (e.g. cache corruption decoded `{"month":99}`) — better than
+    /// crashing the whole app.
     func dateRange(in cal: Calendar = Calendar.current) -> Range<Date> {
-        let start = cal.date(from: DateComponents(year: year, month: month, day: 1))!
-        let end = cal.date(byAdding: .month, value: 1, to: start)!
+        guard let start = cal.date(from: DateComponents(year: year, month: month, day: 1)),
+              let end = cal.date(byAdding: .month, value: 1, to: start) else {
+            return Date.distantPast..<Date.distantPast
+        }
         return start..<end
     }
 
@@ -27,7 +32,9 @@ struct MonthScope: Equatable, Hashable, Codable, Comparable {
         f.dateFormat = "LLLL yyyy"
         var cal = Calendar(identifier: .gregorian)
         cal.locale = locale
-        let date = cal.date(from: DateComponents(year: year, month: month, day: 1))!
+        guard let date = cal.date(from: DateComponents(year: year, month: month, day: 1)) else {
+            return "\(year)-\(month)"
+        }
         return f.string(from: date)
     }
 

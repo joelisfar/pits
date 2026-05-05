@@ -4,9 +4,16 @@ on:
   push:
     tags: ['v*']
 
+# Serialize tag-triggered runs so two near-simultaneous tag pushes don't
+# fight for notarization slots and clobber each other's appcast pushes.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 jobs:
   release:
     runs-on: macos-14
+    timeout-minutes: 60
     permissions:
       contents: write    # for committing appcast.xml back to main and creating the GH release
 
@@ -23,8 +30,18 @@ jobs:
         env:
           CERT_P12_BASE64: ${{ secrets.APPLE_CERT_P12_BASE64 }}
           CERT_P12_PASSPHRASE: ${{ secrets.APPLE_CERT_P12_PASSPHRASE }}
-          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
         run: |
+          # Tempfile + keychain are runner-local; cleanup on any exit, not
+          # just success. The trap below fires even if `security import` or
+          # any subsequent command in this step fails.
+          trap 'rm -f "$RUNNER_TEMP/cert.p12"' EXIT
+
+          # The keychain password is generated inline because it's only
+          # used inside this ephemeral runner — there's no value in storing
+          # it as a long-lived GH secret.
+          KEYCHAIN_PASSWORD=$(openssl rand -hex 32)
+          echo "KEYCHAIN_PASSWORD=$KEYCHAIN_PASSWORD" >> "$GITHUB_ENV"
+
           echo "$CERT_P12_BASE64" | base64 -d > "$RUNNER_TEMP/cert.p12"
           security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
           security default-keychain -s build.keychain
@@ -34,7 +51,6 @@ jobs:
             -P "$CERT_P12_PASSPHRASE" -T /usr/bin/codesign -T /usr/bin/security
           security set-key-partition-list -S apple-tool:,apple: \
             -s -k "$KEYCHAIN_PASSWORD" build.keychain
-          rm "$RUNNER_TEMP/cert.p12"
 
       - name: Generate Xcode project
         run: xcodegen generate
@@ -62,43 +78,92 @@ jobs:
           codesign -dv --verbose=4 "$APP"
           codesign --verify --deep --strict --verbose=2 "$APP"
 
+      - name: Verify Sparkle keypair match
+        env:
+          SPARKLE_ED_PRIVATE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
+        run: |
+          # If APP's SUPublicEDKey doesn't match the private key in the
+          # secret, every shipping client thinks the update is corrupt and
+          # silently fails to update. Catch the mismatch in CI rather than
+          # in the field.
+          trap 'rm -f "$RUNNER_TEMP/sparkle_priv.txt"' EXIT
+
+          echo "$SPARKLE_ED_PRIVATE_KEY" > "$RUNNER_TEMP/sparkle_priv.txt"
+
+          GEN_KEYS=$(find build/release -name generate_keys -type f | head -1)
+          if [ -z "$GEN_KEYS" ]; then
+            echo "✗ generate_keys not found" >&2
+            exit 1
+          fi
+
+          # Derive public key from the private key file. Sparkle's
+          # generate_keys with -p prints the public key matching a given
+          # private key file.
+          DERIVED_PUB=$("$GEN_KEYS" -p "$RUNNER_TEMP/sparkle_priv.txt" 2>/dev/null | tr -d '\n')
+
+          INFO_PLIST="build/release/Build/Products/Release/Pits.app/Contents/Info.plist"
+          EMBEDDED_PUB=$(plutil -extract SUPublicEDKey raw "$INFO_PLIST")
+
+          if [ "$DERIVED_PUB" != "$EMBEDDED_PUB" ]; then
+            echo "✗ Sparkle key mismatch:" >&2
+            echo "  embedded SUPublicEDKey: $EMBEDDED_PUB" >&2
+            echo "  derived from private key: $DERIVED_PUB" >&2
+            echo "  → fix: regenerate keys, update both Info.plist and SPARKLE_ED_PRIVATE_KEY secret" >&2
+            exit 1
+          fi
+          echo "✓ Sparkle keypair matches"
+
       - name: Package DMG
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
           bash scripts/lib/package_dmg.sh "$VERSION"
 
-      - name: Notarize + staple
+      - name: Notarize
         env:
           API_KEY_P8_BASE64: ${{ secrets.APPSTORE_API_KEY_P8_BASE64 }}
           API_KEY_ID: ${{ secrets.APPSTORE_API_KEY_ID }}
           API_ISSUER_ID: ${{ secrets.APPSTORE_API_ISSUER_ID }}
         run: |
+          # 30m timeout: Apple's notary service is normally <5 min but we
+          # observed 2+ hr stalls during v0.2.0 testing. Without a timeout,
+          # the GH runner could be force-killed at the 60-min job cap mid-
+          # notarization, leaving the API key tempfile on disk.
+          trap 'rm -f "$RUNNER_TEMP/key.p8"' EXIT
+
           VERSION="${GITHUB_REF_NAME#v}"
           echo "$API_KEY_P8_BASE64" | base64 -d > "$RUNNER_TEMP/key.p8"
           xcrun notarytool submit "dist/Pits-$VERSION.dmg" \
             --key "$RUNNER_TEMP/key.p8" \
             --key-id "$API_KEY_ID" \
             --issuer "$API_ISSUER_ID" \
-            --wait
+            --wait \
+            --timeout 30m
+
+      - name: Staple + validate
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
           xcrun stapler staple "dist/Pits-$VERSION.dmg"
-          rm "$RUNNER_TEMP/key.p8"
+          # `staple` can sometimes "succeed" without a working ticket on
+          # edge cases. validate is the explicit check.
+          xcrun stapler validate "dist/Pits-$VERSION.dmg"
+          # spctl assess against the DMG itself (with primary-signature
+          # context) confirms Gatekeeper would accept it on a fresh Mac.
+          spctl -a -t open --context context:primary-signature -vv "dist/Pits-$VERSION.dmg" \
+            || { echo "✗ spctl rejected stapled DMG"; exit 1; }
 
       - name: Render release notes to HTML for Sparkle
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          # Extract the matching stanza from RELEASE_NOTES.md (lines from "## vX.Y.Z" up to the next "## " or EOF)
-          awk -v v="## v$VERSION" '
-            $0 == v {capture=1; next}
-            capture && /^## / {exit}
-            capture {print}
-          ' RELEASE_NOTES.md > "$RUNNER_TEMP/notes.md"
-
-          if [ ! -s "$RUNNER_TEMP/notes.md" ]; then
+          # Extract the matching stanza using the shared parser. Both
+          # release.sh's preflight and CI use the same logic so format
+          # changes don't drift between local and CI parsing.
+          source scripts/lib/extract_release_notes.sh
+          if ! extract_release_notes_stanza "v$VERSION" RELEASE_NOTES.md > "$RUNNER_TEMP/notes.md"; then
             echo "✗ No release notes stanza found for v$VERSION in RELEASE_NOTES.md" >&2
             exit 1
           fi
 
-          # Render to HTML. macos-14 runners don't always have pandoc; install if needed.
+          # macos-14 runners don't always have pandoc; install if needed.
           if ! command -v pandoc >/dev/null; then
             brew install pandoc
           fi
@@ -111,6 +176,8 @@ jobs:
         env:
           SPARKLE_ED_PRIVATE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
         run: |
+          trap 'rm -f "$RUNNER_TEMP/sparkle_priv.txt"' EXIT
+
           echo "$SPARKLE_ED_PRIVATE_KEY" > "$RUNNER_TEMP/sparkle_priv.txt"
           GEN_APPCAST=$(find build/release -name generate_appcast -type f | head -1)
           if [ -z "$GEN_APPCAST" ]; then
@@ -119,29 +186,17 @@ jobs:
           fi
           # generate_appcast picks up *.dmg and *.html files in the dist/ directory.
           "$GEN_APPCAST" --ed-key-file "$RUNNER_TEMP/sparkle_priv.txt" dist/
-          rm "$RUNNER_TEMP/sparkle_priv.txt"
 
           # Verify the appcast got an item for this version
           grep -q "Pits-${GITHUB_REF_NAME#v}.dmg" dist/appcast.xml \
             || { echo "✗ appcast.xml is missing the new release"; cat dist/appcast.xml; exit 1; }
 
-      - name: Commit appcast.xml back to main
-        run: |
-          cp dist/appcast.xml /tmp/new-appcast.xml
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git fetch origin main
-          git checkout main
-          git pull origin main
-          cp /tmp/new-appcast.xml ./appcast.xml
-          git add appcast.xml
-          if git diff --cached --quiet; then
-            echo "no appcast changes to commit"
-          else
-            git commit -m "release: appcast for ${GITHUB_REF_NAME}"
-            git push origin main
-          fi
-
+      # Order: publish the GH Release BEFORE pushing the appcast to main.
+      # If we publish appcast first and `gh release create` then fails,
+      # the appcast on main points at a Pits-X.Y.Z.dmg URL that doesn't
+      # exist yet — Sparkle clients hitting the URL get a 404. Publishing
+      # the release first ensures the DMG is live before the appcast
+      # references it.
       - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -151,6 +206,35 @@ jobs:
             --title "$GITHUB_REF_NAME" \
             --notes-file "$RUNNER_TEMP/notes.md" \
             "dist/Pits-$VERSION.dmg"
+
+      - name: Commit appcast.xml back to main
+        run: |
+          cp dist/appcast.xml /tmp/new-appcast.xml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          # Retry loop handles the small race window between fetch and
+          # push when someone else commits to main mid-job. Up to 3
+          # attempts with rebase.
+          for attempt in 1 2 3; do
+            git fetch origin main
+            git checkout main
+            git pull --ff-only origin main
+            cp /tmp/new-appcast.xml ./appcast.xml
+            git add appcast.xml
+            if git diff --cached --quiet; then
+              echo "no appcast changes to commit"
+              break
+            fi
+            git commit -m "release: appcast for ${GITHUB_REF_NAME}"
+            if git push origin main; then
+              echo "✓ appcast pushed (attempt $attempt)"
+              break
+            fi
+            echo "push failed (attempt $attempt) — refetching and retrying"
+            git reset --hard "origin/main"
+            sleep 5
+          done
 
       - name: Cleanup keychain
         if: always()

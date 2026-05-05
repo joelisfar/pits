@@ -60,7 +60,10 @@ final class SnapshotCache {
                 do {
                     try self.writeToDisk(state)
                 } catch {
-                    os_log("snapshot cache write failed: %{public}@", log: Self.log, type: .error, String(describing: error))
+                    // Use %{private}@ — Foundation error descriptions often
+                    // embed the file URL (full home path), which leaks via
+                    // sysdiagnose / Console screenshots if logged publicly.
+                    os_log("snapshot cache write failed: %{private}@", log: Self.log, type: .error, String(describing: error))
                 }
                 self.pendingWorkItem = nil
             }

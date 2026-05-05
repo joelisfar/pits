@@ -7,12 +7,17 @@ import os.log
 enum RemotePricing {
     static let url = URL(string: "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json")!
     static let timeoutSeconds: TimeInterval = 5
+    /// Cap on the response size we'll buffer + parse. The real file is ~150KB
+    /// today; allowing 4MB leaves headroom while preventing a malicious
+    /// upstream (or compromised TLS chain) from feeding gigabytes that
+    /// `JSONSerialization.jsonObject(with:)` would happily try to parse.
+    static let maxResponseBytes: Int = 4 * 1024 * 1024
 
     private static let log = OSLog(subsystem: "net.farriswheel.Pits", category: "RemotePricing")
 
     /// Fetch + parse. Returns empty on any failure (network, HTTP error,
-    /// malformed JSON). Caller is expected to overlay the result onto a
-    /// bundled fallback table.
+    /// malformed JSON, or oversized response). Caller is expected to overlay
+    /// the result onto a bundled fallback table.
     static func fetch(session: URLSession = .shared) async -> [String: Pricing.Rates] {
         var req = URLRequest(url: url)
         req.timeoutInterval = timeoutSeconds
@@ -22,9 +27,13 @@ enum RemotePricing {
                 os_log("LiteLLM HTTP %d", log: log, type: .info, http.statusCode)
                 return [:]
             }
+            if data.count > maxResponseBytes {
+                os_log("LiteLLM response too large: %d bytes", log: log, type: .info, data.count)
+                return [:]
+            }
             return parse(jsonData: data)
         } catch {
-            os_log("LiteLLM fetch failed: %{public}@", log: log, type: .info, String(describing: error))
+            os_log("LiteLLM fetch failed: %{private}@", log: log, type: .info, String(describing: error))
             return [:]
         }
     }
