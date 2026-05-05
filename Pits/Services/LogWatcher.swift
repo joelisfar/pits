@@ -39,7 +39,16 @@ final class LogWatcher {
         self.offsets = initialOffsets
     }
 
-    deinit { stop() }
+    deinit {
+        // deinit only runs when the LogWatcher's refcount hits zero. With an
+        // active FSEventStream, our `Unmanaged.passRetained(self)` keeps a
+        // strong ref alive — so `self.stream` is necessarily already nil
+        // here (cleared by the explicit `stop()` that triggered the release
+        // callback). Calling `_stopUnsafe()` directly handles the start()-
+        // never-completed case without queue.sync (which would deadlock if
+        // deinit happens to run on `queue`).
+        _stopUnsafe()
+    }
 
     // MARK: - Public API
 
@@ -101,6 +110,12 @@ final class LogWatcher {
     }
 
     func stop() {
+        queue.sync { _stopUnsafe() }
+    }
+
+    /// Inner cleanup. NOT queue-synchronized; only safe to call from contexts
+    /// where serialization is guaranteed (queue.sync wrapper or deinit).
+    private func _stopUnsafe() {
         if let s = stream {
             FSEventStreamStop(s)
             FSEventStreamInvalidate(s)
@@ -177,11 +192,28 @@ final class LogWatcher {
                 let suffix = String(resolvedPath.dropFirst(resolvedRoot.count + 1))
                 results.append(URL(fileURLWithPath: configuredRoot).appendingPathComponent(suffix))
             } else {
-                results.append(url)
+                // Symlink escape: a `.jsonl` reachable via a symlink chain
+                // that resolves outside `rootDirectory`. Skip — Pits should
+                // only ingest content the user actually placed under
+                // `~/.claude/projects/` (defense in depth; not a real attack
+                // path on a single-user macOS but trivial to enforce).
+                continue
             }
         }
         return results
     }
+
+    /// Maximum bytes pulled from a single file in one rescan pass.
+    /// Prevents a multi-gigabyte append (or first backfill of a heavy user's
+    /// 100+ session history) from materializing all at once and OOMing the
+    /// menu-bar app. Subsequent passes pick up from the new offset.
+    private static let maxBytesPerRead: Int = 16 * 1024 * 1024
+
+    /// Maximum size of an unfinished trailing partial line we'll buffer.
+    /// A legitimate `tool_result` JSONL line can be 100s of KB; cap higher
+    /// than expected, but bound to prevent unbounded growth from a malformed
+    /// or malicious file with no newlines.
+    private static let maxPartialBytes: Int = 4 * 1024 * 1024
 
     private func readNewBytes(from url: URL) {
         let offset = offsets[url] ?? 0
@@ -197,7 +229,11 @@ final class LogWatcher {
             return
         }
 
-        let newBytes = (try? handle.readToEnd()) ?? Data()
+        // Read at most `maxBytesPerRead` per call. If more is pending, the
+        // FSEvents loop / next rescan picks up the rest. `read(upToCount:)`
+        // may return fewer bytes than requested — that's fine; we just
+        // process what we got.
+        let newBytes = (try? handle.read(upToCount: Self.maxBytesPerRead)) ?? Data()
         guard !newBytes.isEmpty else { return }
 
         let newEnd = (try? handle.offset()) ?? (offset + UInt64(newBytes.count))
@@ -215,7 +251,14 @@ final class LogWatcher {
             start = buffer.index(after: i)
         }
         let trailing = Data(buffer[start..<buffer.endIndex])
-        partials[url] = trailing.isEmpty ? nil : trailing
+        if trailing.count > Self.maxPartialBytes {
+            // Drop runaway partial: a single line bigger than the cap is
+            // either corrupt or hostile. Reset state for this file so we
+            // can recover on next rescan if the file gets fixed/rotated.
+            partials[url] = nil
+        } else {
+            partials[url] = trailing.isEmpty ? nil : trailing
+        }
 
         var emitted: [String] = []
         for lineData in lines {
