@@ -32,6 +32,11 @@ targets:
         # Release builds: CI passes CODE_SIGN_IDENTITY="Developer ID Application" + DEVELOPMENT_TEAM via xcodebuild flags.
         CODE_SIGN_STYLE: Manual
         CODE_SIGN_IDENTITY: "-"
+        # Don't inject com.apple.security.get-task-allow=true into Release builds —
+        # it blocks notarization (debug-attach entitlement is incompatible with hardened runtime).
+        CODE_SIGN_INJECT_BASE_ENTITLEMENTS: NO
+        # Use Apple's secure-timestamp server during signing — required for notarization.
+        OTHER_CODE_SIGN_FLAGS: "--timestamp"
   PitsTests:
     type: bundle.unit-test
     platform: macOS

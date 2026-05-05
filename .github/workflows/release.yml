@@ -53,6 +53,9 @@ jobs:
             DEVELOPMENT_TEAM="$TEAM_ID" \
             clean build
 
+      - name: Re-sign Sparkle nested binaries + main app
+        run: bash scripts/lib/sign_app.sh "Developer ID Application"
+
       - name: Verify codesign
         run: |
           APP=build/release/Build/Products/Release/Pits.app
