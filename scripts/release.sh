@@ -9,6 +9,9 @@ IFS=$'\n\t'
 
 cd "$(dirname "$0")/.."
 
+# shellcheck source=lib/extract_release_notes.sh
+source scripts/lib/extract_release_notes.sh
+
 VERSION="${1:-}"
 
 die() {
@@ -65,7 +68,7 @@ $(git status --porcelain)"
     die "$VERSION is not greater than current MARKETING_VERSION ($current)"
   fi
 
-  grep -q "^## v$VERSION$" RELEASE_NOTES.md \
+  release_notes_stanza_exists "v$VERSION" RELEASE_NOTES.md \
     || die "RELEASE_NOTES.md is missing a '## v$VERSION' stanza — add one before tagging"
 
   echo "  version $VERSION valid; current is $current; release notes stanza found"
@@ -96,8 +99,11 @@ tag_and_push() {
   git commit -m "release: v$VERSION"
   git tag "v$VERSION"
 
-  if ! git push origin main "v$VERSION"; then
-    die "Push failed. Recover with: git push origin main v$VERSION"
+  # --atomic: main and tag push as a unit. Without this, a network blip
+  # could land the bumped commit on origin/main without the tag, leaving
+  # an in-flight release with no CI trigger and an awkward git state.
+  if ! git push --atomic origin main "v$VERSION"; then
+    die "Push failed. Recover with: git push --atomic origin main v$VERSION"
   fi
 
   echo "  pushed main + tag v$VERSION to origin"
