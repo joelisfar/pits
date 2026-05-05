@@ -164,6 +164,15 @@ struct Conversation: Identifiable, Equatable {
     /// so we walk the split against the real filesystem to find the actual
     /// boundary between parent and leaf. Falls back to the naive split when
     /// nothing on disk matches (project may have been moved or deleted).
+    ///
+    /// The walk does `fileExists` probes against assembled paths starting
+    /// from `/`. In theory a process that can write to `~/.claude/projects/`
+    /// could induce probes against arbitrary paths via a crafted directory
+    /// name like `-etc-passwd`. The worst observable effect is the row
+    /// label rendering as `passwd` (or whatever the leaf was). That's
+    /// cosmetic and the path's existence is already publicly knowable —
+    /// noted but not constrained, because Claude Code projects can live
+    /// anywhere on disk (`/tmp`, `/Volumes/...`, `~/...`).
     static func projectName(from fileURL: URL) -> String {
         // Subagent files live at: .../projects/-<proj>/<parent-id>/subagents/<child>.jsonl
         // We want the project directory, not the "subagents" leaf or the parent-id dir.

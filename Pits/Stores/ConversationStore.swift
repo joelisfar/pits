@@ -31,6 +31,12 @@ final class ConversationStore: ObservableObject {
     private let cache: SnapshotCache?
     private let openSessionsWatcher: OpenSessionsWatcher
     private var fileBySession: [String: URL]
+    /// Memoized result of `Conversation.projectName(from:)` keyed by the
+    /// JSONL URL. Walking the project-encoded directory name involves
+    /// multiple `fileExists` syscalls; with 1000+ sessions the cost on
+    /// the main thread per `rebuildSnapshot()` was visible. URL is stable
+    /// per session so the cache need never invalidate at runtime.
+    private var projectNameByURL: [URL: String] = [:]
     private var tickTimer: Timer?
     /// Turns with a timestamp strictly greater than this chime.
     /// Before `start()` is called, it is `.distantFuture` so ingested lines
@@ -206,7 +212,13 @@ final class ConversationStore: ObservableObject {
             let turns = parser.turns(sessionId: sid)
             let humans = parser.humanTurns(sessionId: sid)
             let url = fileBySession[sid] ?? URL(fileURLWithPath: "/dev/null")
-            let projectName = Conversation.projectName(from: url)
+            let projectName: String
+            if let cached = projectNameByURL[url] {
+                projectName = cached
+            } else {
+                projectName = Conversation.projectName(from: url)
+                projectNameByURL[url] = projectName
+            }
             result.append(Conversation(
                 id: sid, projectName: projectName,
                 title: parser.title(sessionId: sid),
