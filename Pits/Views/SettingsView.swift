@@ -2,6 +2,7 @@ import SwiftUI
 import ServiceManagement
 
 struct SettingsView: View {
+    @ObservedObject var updater: UpdaterModel
     @AppStorage(SoundManager.soundsEnabledKey) private var soundsEnabled: Bool = true
     @AppStorage("net.farriswheel.Pits.alwaysOnTop") private var alwaysOnTop: Bool = false
     @State private var launchAtLogin: Bool = (SMAppService.mainApp.status == .enabled)
@@ -43,6 +44,9 @@ struct SettingsView: View {
                         .font(.caption)
                         .foregroundStyle(.red)
                 }
+            }
+            Section("Updates") {
+                CheckForUpdatesView(updater: updater)
             }
         }
         .formStyle(.grouped)

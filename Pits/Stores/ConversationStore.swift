@@ -339,9 +339,13 @@ final class ConversationStore: ObservableObject {
             openSessionIds: openSessionIds
         )
         for e in events { handle(timerEvent: e) }
-        // Force a publish so SwiftUI pulls the latest `conversations` snapshot
-        // and any subscribers (like TimelineView consumers) reflect new state.
-        objectWillChange.send()
+        // Note: no `objectWillChange.send()` here. ConversationListView's
+        // TimelineView(.periodic(by: 1.0)) already drives per-second redraws
+        // for time-dependent UI (cache TTL countdowns). Forcing an extra
+        // publish each tick re-evaluated the entire view body even when
+        // nothing changed — measurable battery drain on heavy users.
+        // Cache-timer events that DO mutate observable state (chimes, status)
+        // already publish via @Published / @AppStorage / store mutations.
     }
 
     private func handle(timerEvent e: CacheTimerEvent) {

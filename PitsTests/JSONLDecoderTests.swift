@@ -131,4 +131,22 @@ final class JSONLDecoderTests: XCTestCase {
         let line = #"{"type":"user","sessionId":"s","timestamp":"2026-04-21T10:00:00.000Z","message":{"content":[{"type":"tool_result","tool_use_id":"x"},{"type":"text","text":"and also..."}]}}"#
         guard case .human = decode(line) else { return XCTFail("expected human") }
     }
+
+    /// ISO-8601 without fractional seconds is a valid format Claude Code may
+    /// some day produce; the parser falls back so we don't silently drop
+    /// entire turns (and their costs).
+    func test_timestamp_withoutFractionalSeconds_decodes() {
+        let line = #"{"type":"user","sessionId":"s","timestamp":"2026-04-21T10:00:00Z","message":{"content":"hi"}}"#
+        guard case .human(let h) = decode(line) else { return XCTFail("expected human") }
+        XCTAssertEqual(h.sessionId, "s")
+    }
+
+    /// humanTurnPreview caps output at 200 chars so the on-disk cache doesn't
+    /// store unbounded prompt content (privacy/footprint concern).
+    func test_humanTurnPreview_capsAt200Chars() {
+        let big = String(repeating: "x", count: 1000)
+        let line = #"{"type":"user","sessionId":"s","timestamp":"2026-04-21T10:00:00.000Z","message":{"content":[{"type":"text","text":"\#(big)"}]}}"#
+        guard case .human(let h) = decode(line) else { return XCTFail("expected human") }
+        XCTAssertEqual(h.text?.count, 200)
+    }
 }

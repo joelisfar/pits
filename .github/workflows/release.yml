@@ -1,0 +1,158 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+jobs:
+  release:
+    runs-on: macos-14
+    permissions:
+      contents: write    # for committing appcast.xml back to main and creating the GH release
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install xcodegen
+        run: brew install xcodegen
+
+      - name: Import signing certificate
+        env:
+          CERT_P12_BASE64: ${{ secrets.APPLE_CERT_P12_BASE64 }}
+          CERT_P12_PASSPHRASE: ${{ secrets.APPLE_CERT_P12_PASSPHRASE }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          echo "$CERT_P12_BASE64" | base64 -d > "$RUNNER_TEMP/cert.p12"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          security set-keychain-settings -t 7200 -u build.keychain
+          security import "$RUNNER_TEMP/cert.p12" -k build.keychain \
+            -P "$CERT_P12_PASSPHRASE" -T /usr/bin/codesign -T /usr/bin/security
+          security set-key-partition-list -S apple-tool:,apple: \
+            -s -k "$KEYCHAIN_PASSWORD" build.keychain
+          rm "$RUNNER_TEMP/cert.p12"
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Build (Release, hardened, signed)
+        env:
+          TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          xcodebuild \
+            -project Pits.xcodeproj \
+            -scheme Pits \
+            -configuration Release \
+            -destination "platform=macOS,arch=arm64" \
+            -derivedDataPath build/release \
+            CODE_SIGN_IDENTITY="Developer ID Application" \
+            DEVELOPMENT_TEAM="$TEAM_ID" \
+            clean build
+
+      - name: Re-sign Sparkle nested binaries + main app
+        run: bash scripts/lib/sign_app.sh "Developer ID Application"
+
+      - name: Verify codesign
+        run: |
+          APP=build/release/Build/Products/Release/Pits.app
+          codesign -dv --verbose=4 "$APP"
+          codesign --verify --deep --strict --verbose=2 "$APP"
+
+      - name: Package DMG
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          bash scripts/lib/package_dmg.sh "$VERSION"
+
+      - name: Notarize + staple
+        env:
+          API_KEY_P8_BASE64: ${{ secrets.APPSTORE_API_KEY_P8_BASE64 }}
+          API_KEY_ID: ${{ secrets.APPSTORE_API_KEY_ID }}
+          API_ISSUER_ID: ${{ secrets.APPSTORE_API_ISSUER_ID }}
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          echo "$API_KEY_P8_BASE64" | base64 -d > "$RUNNER_TEMP/key.p8"
+          xcrun notarytool submit "dist/Pits-$VERSION.dmg" \
+            --key "$RUNNER_TEMP/key.p8" \
+            --key-id "$API_KEY_ID" \
+            --issuer "$API_ISSUER_ID" \
+            --wait
+          xcrun stapler staple "dist/Pits-$VERSION.dmg"
+          rm "$RUNNER_TEMP/key.p8"
+
+      - name: Render release notes to HTML for Sparkle
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          # Extract the matching stanza from RELEASE_NOTES.md (lines from "## vX.Y.Z" up to the next "## " or EOF)
+          awk -v v="## v$VERSION" '
+            $0 == v {capture=1; next}
+            capture && /^## / {exit}
+            capture {print}
+          ' RELEASE_NOTES.md > "$RUNNER_TEMP/notes.md"
+
+          if [ ! -s "$RUNNER_TEMP/notes.md" ]; then
+            echo "✗ No release notes stanza found for v$VERSION in RELEASE_NOTES.md" >&2
+            exit 1
+          fi
+
+          # Render to HTML. macos-14 runners don't always have pandoc; install if needed.
+          if ! command -v pandoc >/dev/null; then
+            brew install pandoc
+          fi
+          pandoc "$RUNNER_TEMP/notes.md" -f markdown -t html -o "dist/Pits-$VERSION.html"
+
+          echo "Rendered notes:"
+          cat "dist/Pits-$VERSION.html"
+
+      - name: Generate signed appcast
+        env:
+          SPARKLE_ED_PRIVATE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
+        run: |
+          echo "$SPARKLE_ED_PRIVATE_KEY" > "$RUNNER_TEMP/sparkle_priv.txt"
+          GEN_APPCAST=$(find build/release -name generate_appcast -type f | head -1)
+          if [ -z "$GEN_APPCAST" ]; then
+            echo "✗ generate_appcast not found in build artifacts" >&2
+            exit 1
+          fi
+          # generate_appcast picks up *.dmg and *.html files in the dist/ directory.
+          "$GEN_APPCAST" --ed-key-file "$RUNNER_TEMP/sparkle_priv.txt" dist/
+          rm "$RUNNER_TEMP/sparkle_priv.txt"
+
+          # Verify the appcast got an item for this version
+          grep -q "Pits-${GITHUB_REF_NAME#v}.dmg" dist/appcast.xml \
+            || { echo "✗ appcast.xml is missing the new release"; cat dist/appcast.xml; exit 1; }
+
+      - name: Commit appcast.xml back to main
+        run: |
+          cp dist/appcast.xml /tmp/new-appcast.xml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch origin main
+          git checkout main
+          git pull origin main
+          cp /tmp/new-appcast.xml ./appcast.xml
+          git add appcast.xml
+          if git diff --cached --quiet; then
+            echo "no appcast changes to commit"
+          else
+            git commit -m "release: appcast for ${GITHUB_REF_NAME}"
+            git push origin main
+          fi
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          gh release create "$GITHUB_REF_NAME" \
+            --title "$GITHUB_REF_NAME" \
+            --notes-file "$RUNNER_TEMP/notes.md" \
+            "dist/Pits-$VERSION.dmg"
+
+      - name: Cleanup keychain
+        if: always()
+        run: |
+          security delete-keychain build.keychain || true

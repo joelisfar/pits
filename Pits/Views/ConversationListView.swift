@@ -3,6 +3,7 @@ import AppKit
 
 struct ConversationListView: View {
     @ObservedObject var store: ConversationStore
+    @ObservedObject var updater: UpdaterModel
     @AppStorage("net.farriswheel.Pits.alwaysOnTop") private var alwaysOnTop: Bool = false
     @State private var selectedIds: Set<String> = []
     @State private var expandedIds: Set<String> = []
@@ -49,6 +50,14 @@ struct ConversationListView: View {
                     ProgressView()
                         .controlSize(.small)
                         .scaleEffect(0.7)
+                } else if updater.updateAvailable {
+                    Button(action: { updater.checkForUpdates() }) {
+                        Image(systemName: "arrow.down.circle.fill")
+                            .foregroundStyle(.blue)
+                            .imageScale(.medium)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Update available — click to install")
                 }
             }
             .padding(.horizontal, 12)

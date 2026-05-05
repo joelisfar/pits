@@ -22,5 +22,13 @@
     <string>$(MACOSX_DEPLOYMENT_TARGET)</string>
     <key>NSHumanReadableCopyright</key>
     <string>Copyright © 2026. All rights reserved.</string>
+    <key>SUFeedURL</key>
+    <string>https://raw.githubusercontent.com/joelisfar/pits/main/appcast.xml</string>
+    <key>SUEnableAutomaticChecks</key>
+    <true/>
+    <key>SUScheduledCheckInterval</key>
+    <integer>259200</integer>
+    <key>SUPublicEDKey</key>
+    <string>vTdHCrufHco1L2CYvabvUW6L8AHlHfAb38+qt9oH/RA=</string>
 </dict>
 </plist>

@@ -10,19 +10,38 @@ settings:
     MARKETING_VERSION: "0.1.9"
     CURRENT_PROJECT_VERSION: "10"
     GENERATE_INFOPLIST_FILE: NO
+packages:
+  Sparkle:
+    url: https://github.com/sparkle-project/Sparkle
+    # Pinned exactly: SwiftPM `from:` would let any 2.x.y land in CI, and
+    # Pits.xcodeproj/ (with Package.resolved inside) is gitignored — so a fresh
+    # CI run does dependency resolution from scratch every time. A compromised
+    # Sparkle release between tags would silently ship signed by our cert.
+    # Bump this number deliberately when upgrading Sparkle; don't auto-track.
+    exactVersion: 2.9.1
 targets:
   Pits:
     type: application
     platform: macOS
     sources:
       - path: Pits
+    dependencies:
+      - package: Sparkle
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: net.farriswheel.Pits
         INFOPLIST_FILE: Pits/Info.plist
-        CODE_SIGN_STYLE: Automatic
-        CODE_SIGN_IDENTITY: "-"
         ENABLE_HARDENED_RUNTIME: YES
+        CODE_SIGN_ENTITLEMENTS: Pits/Pits.entitlements
+        # Local Debug builds: ad-hoc sign so the app launches without a Developer ID cert.
+        # Release builds: CI passes CODE_SIGN_IDENTITY="Developer ID Application" + DEVELOPMENT_TEAM via xcodebuild flags.
+        CODE_SIGN_STYLE: Manual
+        CODE_SIGN_IDENTITY: "-"
+        # Don't inject com.apple.security.get-task-allow=true into Release builds —
+        # it blocks notarization (debug-attach entitlement is incompatible with hardened runtime).
+        CODE_SIGN_INJECT_BASE_ENTITLEMENTS: NO
+        # Use Apple's secure-timestamp server during signing — required for notarization.
+        OTHER_CODE_SIGN_FLAGS: "--timestamp"
   PitsTests:
     type: bundle.unit-test
     platform: macOS

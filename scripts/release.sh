@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Build, package, tag, and publish an unsigned Pits release.
-# Phase 1 — see docs/superpowers/specs/2026-04-22-release-pipeline-phase1-design.md
+# Local-only tagging tool. Bumps version, asserts release notes, commits, tags, pushes.
+# CI (.github/workflows/release.yml) takes it from there: build, sign, notarize, publish.
+# Phase 2 — see docs/superpowers/specs/2026-05-04-release-pipeline-phase2-design.md
 # Usage: bash scripts/release.sh X.Y.Z
 
 set -euo pipefail
@@ -9,9 +10,6 @@ IFS=$'\n\t'
 cd "$(dirname "$0")/.."
 
 VERSION="${1:-}"
-# Set by build_release + package_dmg for downstream phases to consume.
-APP_PATH=""
-DMG_PATH=""
 
 die() {
   echo "✗ $1" >&2
@@ -19,7 +17,6 @@ die() {
 }
 
 version_gt() {
-  # Returns 0 iff $1 > $2 by semver. Uses sort -V (BSD sort on macOS 12+).
   [[ "$1" == "$2" ]] && return 1
   local higher
   higher=$(printf '%s\n%s\n' "$1" "$2" | sort -V | tail -n 1)
@@ -33,7 +30,7 @@ preflight() {
   [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] \
     || die "Version must match X.Y.Z; got: $VERSION"
 
-  for tool in xcodegen xcodebuild hdiutil gh git; do
+  for tool in xcodegen gh git; do
     command -v "$tool" >/dev/null \
       || die "$tool not on PATH"
   done
@@ -68,7 +65,10 @@ $(git status --porcelain)"
     die "$VERSION is not greater than current MARKETING_VERSION ($current)"
   fi
 
-  echo "  version $VERSION is valid; current is $current"
+  grep -q "^## v$VERSION$" RELEASE_NOTES.md \
+    || die "RELEASE_NOTES.md is missing a '## v$VERSION' stanza — add one before tagging"
+
+  echo "  version $VERSION valid; current is $current; release notes stanza found"
 }
 
 bump_version() {
@@ -81,7 +81,6 @@ bump_version() {
     || die "Could not read CURRENT_PROJECT_VERSION from project.yml"
   new_project_version=$((current_project_version + 1))
 
-  # BSD sed (macOS): -i '' for in-place with no backup.
   sed -i '' -E "s/^(    MARKETING_VERSION: )\"[^\"]+\"/\1\"$VERSION\"/" project.yml
   sed -i '' -E "s/^(    CURRENT_PROJECT_VERSION: )\"[^\"]+\"/\1\"$new_project_version\"/" project.yml
 
@@ -90,67 +89,9 @@ bump_version() {
   echo "  MARKETING_VERSION=$VERSION CURRENT_PROJECT_VERSION=$new_project_version"
 }
 
-build_release() {
-  echo "→ build_release (this takes ~30s on a warm cache)"
-
-  rm -rf build/release
-
-  # Capture stderr so CoreSimulator's "out of date" noise doesn't pollute the
-  # release log. Same pattern as scripts/run.sh. Only surface stderr if
-  # xcodebuild actually failed.
-  local err_log
-  err_log=$(mktemp)
-
-  if ! xcodebuild \
-    -project Pits.xcodeproj \
-    -scheme Pits \
-    -configuration Release \
-    -destination "platform=macOS,arch=$(uname -m)" \
-    -derivedDataPath build/release \
-    clean build \
-    2>"$err_log" >/dev/null; then
-    echo "✗ xcodebuild failed — stderr follows:" >&2
-    cat "$err_log" >&2
-    rm -f "$err_log"
-    die "Release build failed"
-  fi
-  rm -f "$err_log"
-
-  APP_PATH="build/release/Build/Products/Release/Pits.app"
-  [[ -d "$APP_PATH" ]] \
-    || die "Built app not found at $APP_PATH"
-
-  echo "  $APP_PATH"
-}
-
-package_dmg() {
-  echo "→ package_dmg"
-
-  local staging="build/dmg-staging"
-  rm -rf "$staging" dist
-  mkdir -p "$staging" dist
-
-  cp -R "$APP_PATH" "$staging/"
-  ln -s /Applications "$staging/Applications"
-
-  DMG_PATH="dist/Pits-$VERSION.dmg"
-  hdiutil create \
-    -volname "Pits $VERSION" \
-    -srcfolder "$staging" \
-    -ov -format UDZO \
-    "$DMG_PATH" \
-    >/dev/null
-
-  [[ -f "$DMG_PATH" ]] \
-    || die "DMG not created at $DMG_PATH"
-
-  echo "  $DMG_PATH ($(du -h "$DMG_PATH" | cut -f1))"
-}
-
 tag_and_push() {
   echo "→ tag_and_push"
 
-  # Pits.xcodeproj/ is gitignored — regenerated on demand via xcodegen.
   git add project.yml
   git commit -m "release: v$VERSION"
   git tag "v$VERSION"
@@ -162,28 +103,20 @@ tag_and_push() {
   echo "  pushed main + tag v$VERSION to origin"
 }
 
-publish() {
-  echo "→ publish"
-
-  if ! gh release create "v$VERSION" \
-    --title "v$VERSION" \
-    --generate-notes \
-    "$DMG_PATH"; then
-    die "Release creation failed. Recover with: gh release create v$VERSION --generate-notes --title v$VERSION $DMG_PATH"
-  fi
-
-  echo "  https://github.com/joelisfar/pits/releases/tag/v$VERSION"
+print_ci_url() {
+  echo ""
+  echo "✓ Tag pushed. CI is now building, signing, notarizing, and publishing."
+  echo "  Watch: https://github.com/joelisfar/pits/actions"
+  echo "  Release will appear at: https://github.com/joelisfar/pits/releases/tag/v$VERSION"
+  echo ""
+  echo "  ETA: ~5–8 minutes."
 }
 
 main() {
   preflight
   bump_version
-  build_release
-  package_dmg
   tag_and_push
-  publish
-
-  echo "✓ Released v$VERSION"
+  print_ci_url
 }
 
 main

@@ -35,9 +35,18 @@ struct SessionTitle: Equatable, Codable {
 }
 
 enum JSONLDecoder {
-    private static let timestampFormatter: ISO8601DateFormatter = {
+    // Claude Code writes ISO-8601 timestamps with fractional seconds, but
+    // the format isn't a contract — try with first, fall back to without
+    // so a future change like "2026-04-21T10:00:00Z" doesn't silently drop
+    // entire JSONL lines (and their costs).
+    private static let timestampFormatterFractional: ISO8601DateFormatter = {
         let f = ISO8601DateFormatter()
         f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return f
+    }()
+    private static let timestampFormatterPlain: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime]
         return f
     }()
 
@@ -112,7 +121,8 @@ enum JSONLDecoder {
 
     private static func parseTimestamp(_ raw: String?) -> Date? {
         guard let raw else { return nil }
-        return timestampFormatter.date(from: raw)
+        return timestampFormatterFractional.date(from: raw)
+            ?? timestampFormatterPlain.date(from: raw)
     }
 
     private static func isHumanTurn(_ obj: [String: Any]) -> Bool {
@@ -176,8 +186,16 @@ enum JSONLDecoder {
 
         let stripped = stripTag("ide_opened_file", from: stripTag("ide_selection", from: trimmed))
         let final = stripped.trimmingCharacters(in: .whitespacesAndNewlines)
-        return final.isEmpty ? nil : final
+        if final.isEmpty { return nil }
+        // Cap preview length: row UI only shows a single truncated line, so
+        // storing the full prompt is wasteful and a privacy hazard if the
+        // cache file is ever read (it lives at ~/Library/Caches/state.json).
+        return final.count > previewCharLimit
+            ? String(final.prefix(previewCharLimit))
+            : final
     }
+
+    private static let previewCharLimit = 200
 
     /// Removes `<name>…</name>` blocks (including tags). Non-greedy so multiple
     /// occurrences are each excised. Returns the input unchanged if the tag

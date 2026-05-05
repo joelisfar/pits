@@ -73,4 +73,34 @@ final class LogParserTests: XCTestCase {
         let parser = LogParser()
         XCTAssertNil(parser.firstMessageText(sessionId: "s"))
     }
+
+    /// HumanTurns dedup by (sessionId, timestamp). Without this, a botched
+    /// reconciliation that re-reads bytes past an offset would silently grow
+    /// humanTurnsBySession unboundedly each launch (review finding M2).
+    func test_humanTurns_dedupByTimestamp() {
+        let parser = LogParser()
+        let line = #"{"type":"user","sessionId":"s","timestamp":"2026-04-21T10:00:00.000Z","message":{"content":"hi"}}"#
+        parser.ingest(line: line)
+        parser.ingest(line: line)   // identical line → should dedup
+        parser.ingest(line: line)
+        XCTAssertEqual(parser.humanTurns(sessionId: "s").count, 1)
+    }
+
+    /// Hydration from a legacy cache containing duplicates dedups on init.
+    func test_humanTurns_dedupOnHydrate() {
+        let h = HumanTurn(
+            sessionId: "s",
+            timestamp: Date(timeIntervalSince1970: 1234),
+            isSubagent: false,
+            agentId: nil,
+            text: "hi"
+        )
+        let seed = PersistedParser(
+            turnsByRequestId: [:],
+            humanTurnsBySession: ["s": [h, h, h]],   // pre-dedup-fix cache
+            titleBySession: [:]
+        )
+        let parser = LogParser(seed: seed)
+        XCTAssertEqual(parser.humanTurns(sessionId: "s").count, 1)
+    }
 }

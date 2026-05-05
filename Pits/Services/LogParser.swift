@@ -14,9 +14,31 @@ final class LogParser {
     init(seed: PersistedParser? = nil) {
         if let seed {
             self.turnsByRequestId = seed.turnsByRequestId
-            self.humanTurnsBySession = seed.humanTurnsBySession
+            // Dedup any existing duplicates from caches written before the
+            // dedup rule landed (warm-launch reconciliation could append the
+            // same human turn twice if offsets were ever miscomputed). One-
+            // shot cleanup on hydrate; subsequent ingest() prevents new dups.
+            self.humanTurnsBySession = seed.humanTurnsBySession.mapValues { Self.dedupHumanTurns($0) }
             self.titleBySession = seed.titleBySession
         }
+    }
+
+    /// Dedup HumanTurn arrays by `(sessionId, timestamp)`. Real human turns
+    /// have sub-millisecond timestamps; identical timestamps almost always
+    /// mean the same JSONL line was processed twice (offset miscalc, replay
+    /// after a crash, etc.). Keep the first occurrence — preview text is
+    /// derived from the line content and stable.
+    private static func dedupHumanTurns(_ turns: [HumanTurn]) -> [HumanTurn] {
+        var seen: Set<Date> = []
+        seen.reserveCapacity(turns.count)
+        var out: [HumanTurn] = []
+        out.reserveCapacity(turns.count)
+        for t in turns {
+            if seen.insert(t.timestamp).inserted {
+                out.append(t)
+            }
+        }
+        return out
     }
 
     func ingest(line: String) {
@@ -25,7 +47,13 @@ final class LogParser {
         case .turn(let t):
             ingestTurn(t)
         case .human(let h):
-            humanTurnsBySession[h.sessionId, default: []].append(h)
+            // Dedup by (sessionId, timestamp). Without this, a botched
+            // reconciliation that re-reads bytes would silently grow
+            // humanTurnsBySession unboundedly each launch.
+            let existing = humanTurnsBySession[h.sessionId] ?? []
+            if !existing.contains(where: { $0.timestamp == h.timestamp }) {
+                humanTurnsBySession[h.sessionId, default: []].append(h)
+            }
         case .title(let st):
             // Claude Code occasionally overwrites the title mid-session; take
             // the most recently seen value.

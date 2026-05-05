@@ -29,6 +29,9 @@ final class SnapshotCache {
     /// schema mismatch — callers do not care why the cache is unavailable.
     func load() -> PersistedState? {
         guard let data = try? Data(contentsOf: fileURL) else { return nil }
+        // One-shot tighten of pre-existing cache files written before the
+        // 0600 convention landed. Idempotent: if already 0600, no-op.
+        try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: fileURL.path)
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
         guard let state = try? decoder.decode(PersistedState.self, from: data) else { return nil }
@@ -74,5 +77,11 @@ final class SnapshotCache {
         let parent = fileURL.deletingLastPathComponent()
         try? FileManager.default.createDirectory(at: parent, withIntermediateDirectories: true)
         try data.write(to: fileURL, options: .atomic)
+        // Restrict to user-only read/write — cache contains user-message
+        // previews; a 0644 file at ~/Library/Caches/state.json leaks chat
+        // history to anyone reading the home dir (backups, shared accounts,
+        // accidental chmod -R, etc.). Atomic write inherits umask (typically
+        // 0644); chmod afterward to lock it down. Best-effort: ignore errors.
+        try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: fileURL.path)
     }
 }
