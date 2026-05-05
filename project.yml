@@ -13,7 +13,12 @@ settings:
 packages:
   Sparkle:
     url: https://github.com/sparkle-project/Sparkle
-    from: 2.6.0
+    # Pinned exactly: SwiftPM `from:` would let any 2.x.y land in CI, and
+    # Pits.xcodeproj/ (with Package.resolved inside) is gitignored — so a fresh
+    # CI run does dependency resolution from scratch every time. A compromised
+    # Sparkle release between tags would silently ship signed by our cert.
+    # Bump this number deliberately when upgrading Sparkle; don't auto-track.
+    exactVersion: 2.9.1
 targets:
   Pits:
     type: application
