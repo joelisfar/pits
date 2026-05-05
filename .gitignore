@@ -68,3 +68,4 @@ build/
 dist/
 *.xcuserstate
 .swiftpm/
+build/release-preflight/

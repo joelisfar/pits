@@ -74,6 +74,71 @@ $(git status --porcelain)"
   echo "  version $VERSION valid; current is $current; release notes stanza found"
 }
 
+preflight_build() {
+  echo "→ preflight_build (catches notarization blockers locally)"
+
+  # Skip if explicitly disabled or if we don't have a Developer ID cert
+  # available locally (the user may have cleaned up after first release).
+  if [[ "${RELEASE_SKIP_PREFLIGHT_BUILD:-}" == "1" ]]; then
+    echo "  skipped (RELEASE_SKIP_PREFLIGHT_BUILD=1)"
+    return
+  fi
+
+  local team_id
+  team_id=$(security find-identity -p codesigning -v 2>/dev/null \
+            | grep "Developer ID Application" \
+            | head -1 \
+            | sed -E 's/.*\(([A-Z0-9]{10})\).*/\1/')
+  if [[ -z "$team_id" ]]; then
+    echo "  ⚠ no Developer ID cert in keychain — skipping local sign verify"
+    echo "    (set RELEASE_SKIP_PREFLIGHT_BUILD=1 to silence this in future)"
+    return
+  fi
+
+  # Use a separate build dir so a parallel scripts/run.sh isn't disturbed.
+  local err_log
+  err_log=$(mktemp)
+  if ! xcodebuild \
+    -project Pits.xcodeproj \
+    -scheme Pits \
+    -configuration Release \
+    -destination "platform=macOS,arch=$(uname -m)" \
+    -derivedDataPath build/release-preflight \
+    CODE_SIGN_IDENTITY="Developer ID Application" \
+    DEVELOPMENT_TEAM="$team_id" \
+    build \
+    2>"$err_log" >/dev/null; then
+    echo "✗ preflight build failed — xcodebuild stderr follows:" >&2
+    cat "$err_log" >&2
+    rm -f "$err_log"
+    die "Build broken — fix before tagging"
+  fi
+  rm -f "$err_log"
+
+  # Exercise sign_app.sh: catches new Sparkle binaries that need to be
+  # added to KNOWN_NESTED, mismatched entitlements, etc. Same script
+  # CI runs. Capture noisy codesign output so the script stays scannable;
+  # surface it only if signing fails (then the user can re-run manually).
+  local sign_log
+  sign_log=$(mktemp)
+  if ! APP_PATH="build/release-preflight/Build/Products/Release/Pits.app" \
+       bash scripts/lib/sign_app.sh "Developer ID Application" >"$sign_log" 2>&1; then
+    echo "✗ sign_app.sh failed:" >&2
+    cat "$sign_log" >&2
+    rm -f "$sign_log"
+    die "sign_app.sh failed — fix before tagging"
+  fi
+  rm -f "$sign_log"
+
+  # Final structural check: codesign --verify catches deep-signing
+  # issues that wouldn't show up until notarization scan.
+  codesign --verify --deep --strict \
+    "build/release-preflight/Build/Products/Release/Pits.app" >/dev/null 2>&1 \
+    || die "codesign verify failed — fix before tagging"
+
+  echo "  ✓ Release build signs cleanly (Team $team_id)"
+}
+
 bump_version() {
   echo "→ bump_version"
 
@@ -120,6 +185,7 @@ print_ci_url() {
 
 main() {
   preflight
+  preflight_build
   bump_version
   tag_and_push
   print_ci_url
