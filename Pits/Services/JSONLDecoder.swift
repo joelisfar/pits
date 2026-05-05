@@ -176,8 +176,16 @@ enum JSONLDecoder {
 
         let stripped = stripTag("ide_opened_file", from: stripTag("ide_selection", from: trimmed))
         let final = stripped.trimmingCharacters(in: .whitespacesAndNewlines)
-        return final.isEmpty ? nil : final
+        if final.isEmpty { return nil }
+        // Cap preview length: row UI only shows a single truncated line, so
+        // storing the full prompt is wasteful and a privacy hazard if the
+        // cache file is ever read (it lives at ~/Library/Caches/state.json).
+        return final.count > previewCharLimit
+            ? String(final.prefix(previewCharLimit))
+            : final
     }
+
+    private static let previewCharLimit = 200
 
     /// Removes `<name>…</name>` blocks (including tags). Non-greedy so multiple
     /// occurrences are each excised. Returns the input unchanged if the tag

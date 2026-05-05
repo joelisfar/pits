@@ -28,10 +28,16 @@ enum PricingCache {
         let parent = url.deletingLastPathComponent()
         try? FileManager.default.createDirectory(at: parent, withIntermediateDirectories: true)
         try data.write(to: url, options: .atomic)
+        // Match SnapshotCache: lock to user-only. Pricing data isn't sensitive
+        // on its own, but the convention keeps both caches at 0600 so future
+        // additions to either don't have to be re-audited.
+        try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
     }
 
     static func load(from url: URL) -> Snapshot? {
         guard let data = try? Data(contentsOf: url) else { return nil }
+        // One-shot tighten of pre-existing cache files (0644 → 0600).
+        try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
         return try? decoder.decode(Snapshot.self, from: data)
